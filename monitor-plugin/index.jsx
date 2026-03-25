@@ -634,10 +634,11 @@ export default function TasksPage({ params, setParams }) {
           flex:                1,
           display:             'grid',
           gridTemplateColumns: `repeat(${columns.length}, 1fr)`,
+          gridAutoRows:        '1fr',
           gap:                 16,
           padding:             '16px 20px',
           overflowY:           'auto',
-          alignItems:          'start',
+          alignItems:          'stretch',
         }}>
           {columns.map(status => (
             <Column
