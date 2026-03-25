@@ -155,22 +155,30 @@ function SubtaskRow({ task, onStatusChange, onSelect }) {
 
 // ── TaskCard (in board) ───────────────────────────────────────────────────────
 
-function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected }) {
+function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected, draggingId, onDragStart, onDragEnd }) {
   const [expanded, setExpanded] = useState(false);
   const subtasks  = allTasks.filter(t => t.parentId === task.id);
   const doneCount = subtasks.filter(t => t.status === 'done').length;
   const pm = PRIORITY_META[task.priority];
+  const isDragging = draggingId === task.id;
 
   return (
-    <div style={{
-      background:    'var(--surface)',
-      border:        `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
-      borderRadius:  'var(--radius)',
-      padding:       '10px 12px',
-      display:       'flex',
-      flexDirection: 'column',
-      gap:           7,
-    }}>
+    <div
+      draggable
+      onDragStart={e => { e.dataTransfer.setData('text/plain', task.id); e.dataTransfer.effectAllowed = 'move'; onDragStart(task.id); }}
+      onDragEnd={onDragEnd}
+      style={{
+        background:    'var(--surface)',
+        border:        `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
+        borderRadius:  'var(--radius)',
+        padding:       '10px 12px',
+        display:       'flex',
+        flexDirection: 'column',
+        gap:           7,
+        opacity:       isDragging ? 0.4 : 1,
+        cursor:        'grab',
+        transition:    'opacity 0.15s',
+      }}>
       {/* title — clickable */}
       <div
         onClick={() => onSelect(task.id)}
@@ -233,16 +241,30 @@ function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected }) {
 
 // ── Column ────────────────────────────────────────────────────────────────────
 
-function Column({ status, tasks, allTasks, onStatusChange, onSelect, selectedId }) {
+function Column({ status, tasks, allTasks, onStatusChange, onSelect, selectedId, draggingId, onDragStart, onDragEnd, isDragOver, onDragOver, onDragLeave, onDrop }) {
   const sm = STATUS_META[status];
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      style={{
+        display:       'flex',
+        flexDirection: 'column',
+        gap:           8,
+        minWidth:      0,
+        borderRadius:  'var(--radius)',
+        outline:       isDragOver ? `2px dashed color-mix(in srgb, ${sm.color} 60%, transparent)` : '2px dashed transparent',
+        transition:    'outline 0.1s',
+        padding:       isDragOver ? '4px' : '4px',
+      }}>
       <div style={{
         display:      'flex',
         alignItems:   'center',
         gap:          8,
         paddingBottom: 8,
-        borderBottom: `2px solid color-mix(in srgb, ${sm.color} 40%, transparent)`,
+        borderBottom: `2px solid color-mix(in srgb, ${sm.color} ${isDragOver ? 80 : 40}%, transparent)`,
+        transition:   'border-color 0.1s',
       }}>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: sm.color, fontWeight: 600 }}>
           {sm.label}
@@ -256,15 +278,36 @@ function Column({ status, tasks, allTasks, onStatusChange, onSelect, selectedId 
         </span>
       </div>
       {tasks.length === 0
-        ? <div style={{ color: 'var(--fg3)', fontSize: '12px', fontFamily: 'var(--font-mono)', padding: '8px 0' }}>—</div>
+        ? <div style={{
+            color: isDragOver ? sm.color : 'var(--fg3)',
+            fontSize: '12px', fontFamily: 'var(--font-mono)', padding: '8px 0',
+            transition: 'color 0.1s',
+          }}>
+            {isDragOver ? '⊕ drop here' : '—'}
+          </div>
         : tasks.map(t => (
             <TaskCard
               key={t.id} task={t} allTasks={allTasks}
               onStatusChange={onStatusChange} onSelect={onSelect}
               isSelected={selectedId === t.id}
+              draggingId={draggingId} onDragStart={onDragStart} onDragEnd={onDragEnd}
             />
           ))
       }
+      {/* drop target hint when column has cards */}
+      {tasks.length > 0 && isDragOver && (
+        <div style={{
+          border:       `1px dashed color-mix(in srgb, ${sm.color} 50%, transparent)`,
+          borderRadius: 'var(--radius)',
+          padding:      '8px',
+          textAlign:    'center',
+          fontFamily:   'var(--font-mono)',
+          fontSize:     '11px',
+          color:        sm.color,
+        }}>
+          ⊕ drop here
+        </div>
+      )}
     </div>
   );
 }
@@ -501,8 +544,10 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose }) {
 // ── page ──────────────────────────────────────────────────────────────────────
 
 export default function TasksPage({ params, setParams }) {
-  const [tasks, setTasks]         = useState([]);
-  const [loading, setLoading]     = useState(true);
+  const [tasks, setTasks]           = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [draggingId, setDraggingId] = useState(null);
+  const [dragOverStatus, setDragOverStatus] = useState(null);
 
   // Persist filter + selection in URL params
   const activeTag  = params.tag    ?? null;
@@ -602,6 +647,19 @@ export default function TasksPage({ params, setParams }) {
               onStatusChange={handleStatusChange}
               onSelect={handleSelect}
               selectedId={selectedId}
+              draggingId={draggingId}
+              onDragStart={id => setDraggingId(id)}
+              onDragEnd={() => { setDraggingId(null); setDragOverStatus(null); }}
+              isDragOver={dragOverStatus === status}
+              onDragOver={e => { e.preventDefault(); setDragOverStatus(status); }}
+              onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverStatus(null); }}
+              onDrop={e => {
+                e.preventDefault();
+                const id = e.dataTransfer.getData('text/plain');
+                setDraggingId(null);
+                setDragOverStatus(null);
+                if (id) handleStatusChange(id, status);
+              }}
             />
           ))}
         </div>
