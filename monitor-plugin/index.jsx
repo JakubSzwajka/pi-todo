@@ -500,12 +500,18 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose }) {
 
 // ── page ──────────────────────────────────────────────────────────────────────
 
-export default function TasksPage() {
+export default function TasksPage({ params, setParams }) {
   const [tasks, setTasks]         = useState([]);
   const [loading, setLoading]     = useState(true);
-  const [activeTag, setActiveTag] = useState(null);
-  const [showDone, setShowDone]   = useState(false);
-  const [selectedId, setSelectedId] = useState(null);
+
+  // Persist filter + selection in URL params
+  const activeTag  = params.tag    ?? null;
+  const showDone   = params.done   === '1';
+  const selectedId = params.task   ?? null;
+
+  const setActiveTag  = (tag)  => setParams({ ...params, tag: tag ?? null });
+  const setShowDone   = (fn)   => setParams({ ...params, done: fn(showDone) ? '1' : null });
+  const setSelectedId = (id)   => setParams({ ...params, task: id ?? null });
 
   const fetchTasks = useCallback(() => {
     fetch('/api/pi-todo/tasks')

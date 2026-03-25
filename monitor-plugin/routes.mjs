@@ -17,7 +17,8 @@ function writeStore(store) {
 export default async function routes(req, res, url, { sendJson, readBody }) {
   // GET /api/pi-todo/tasks
   if (req.method === 'GET' && url.pathname === '/api/pi-todo/tasks') {
-    return sendJson(res, 200, readStore().tasks);
+    sendJson(res, 200, readStore().tasks);
+    return true;
   }
 
   // PATCH /api/pi-todo/tasks/:id  — update status
@@ -26,12 +27,13 @@ export default async function routes(req, res, url, { sendJson, readBody }) {
     const body = await readBody(req);
     const store = readStore();
     const task = store.tasks.find(t => t.id === id);
-    if (!task) return sendJson(res, 404, { error: 'Task not found' });
+    if (!task) { sendJson(res, 404, { error: 'Task not found' }); return true; }
     if (body.status) {
       task.status = body.status;
       task.updatedAt = new Date().toISOString();
     }
     writeStore(store);
-    return sendJson(res, 200, task);
+    sendJson(res, 200, task);
+    return true;
   }
 }
