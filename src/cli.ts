@@ -24,21 +24,27 @@ function parseArgs(argv: string[]) {
   return { pos, flags };
 }
 
+function parseTags(raw: string): string[] {
+  return raw.split(',').map(t => t.trim()).filter(Boolean);
+}
+
 // ─── Help ─────────────────────────────────────────────────────────────────────
 
 const HELP = `
 Usage: todo <command> [options]
 
 Commands:
-  add <title> [--priority 1-3] [--note <text>]    Add a task
-  list [--status <status>] [--all]                 List tasks
-  show <id>                                        Show task + full log
-  status <id> <status>                             Change task status
-  update <id> [--title <text>] [--priority 1-3]   Update task fields
-  log <id> <note text>                             Append a note to a task
-  delete <id>                                      Delete a task
+  add <title> [--priority 1-3] [--description <text>]
+              [--parent <id>] [--tags <tag1,tag2>] [--note <text>]
+  list [--status <status>] [--tag <tag>] [--all]
+  show <id>
+  status <id> <status>
+  update <id> [--title <text>] [--priority 1-3] [--description <text>]
+              [--parent <id>] [--tags <tag1,tag2>]
+  log <id> <note text>
+  delete <id>
 
-Statuses: open | in_progress | review | done | cancelled
+Statuses:   open | in_progress | review | done | cancelled
 Priorities: 1 (low) | 2 (medium) | 3 (high)
 `;
 
@@ -52,15 +58,19 @@ switch (cmd) {
     const title = rest.join(' ') || (flags['title'] as string);
     if (!title) { console.error('Usage: todo add <title>'); process.exit(1); }
     cmdAdd(title, {
-      note: flags['note'] as string | undefined,
-      priority: flags['priority'] ? parseInt(flags['priority'] as string) : undefined,
+      description: flags['description'] as string | undefined,
+      note:        flags['note']        as string | undefined,
+      priority:    flags['priority']    ? parseInt(flags['priority'] as string) : undefined,
+      parentId:    flags['parent']      as string | undefined,
+      tags:        flags['tags']        ? parseTags(flags['tags'] as string) : undefined,
     });
     break;
   }
   case 'list': {
     cmdList({
       status: flags['status'] as string | undefined,
-      all: flags['all'] === true,
+      tag:    flags['tag']    as string | undefined,
+      all:    flags['all'] === true,
     });
     break;
   }
@@ -75,10 +85,13 @@ switch (cmd) {
     break;
   }
   case 'update': {
-    if (!rest[0]) { console.error('Usage: todo update <id> [--title ...] [--priority ...]'); process.exit(1); }
+    if (!rest[0]) { console.error('Usage: todo update <id> [options]'); process.exit(1); }
     cmdUpdate(rest[0], {
-      title: flags['title'] as string | undefined,
-      priority: flags['priority'] ? parseInt(flags['priority'] as string) : undefined,
+      title:       flags['title']       as string | undefined,
+      description: flags['description'] as string | undefined,
+      priority:    flags['priority']    ? parseInt(flags['priority'] as string) : undefined,
+      parentId:    flags['parent']      as string | undefined,
+      tags:        flags['tags']        ? parseTags(flags['tags'] as string) : undefined,
     });
     break;
   }

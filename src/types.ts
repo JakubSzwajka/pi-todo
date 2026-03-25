@@ -11,6 +11,9 @@ export interface LogEntry {
 export interface Task {
   id: string;
   title: string;
+  description?: string;   // body / PRD content, set once, editable
+  parentId?: string;       // loose reference to a parent task id
+  tags: string[];          // project / context labels e.g. snapcap, highfive
   priority: Priority;
   status: Status;
   createdAt: string;

@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 import { Type } from '@sinclair/typebox';
-import { readStore, writeStore, generateId, findTask } from '../src/store.js';
-import type { Status, Priority, Author, Task } from '../src/types.js';
+import { readStore, writeStore, generateId, findTask } from './src/store.js';
+import type { Status, Priority, Author, Task } from './src/types.js';
 
 const StatusEnum = () => Type.Union([
   Type.Literal('open'),
@@ -39,19 +39,23 @@ export default function (pi: ExtensionAPI) {
         Type.Literal('delete'),
       ], { description: 'Action to perform' }),
 
-      // list
+      // list filters
       filterStatus: Type.Optional(StatusEnum()),
-      all: Type.Optional(Type.Boolean({ description: 'Include done and cancelled tasks' })),
+      filterTag:    Type.Optional(Type.String({ description: 'Filter by tag e.g. snapcap, highfive' })),
+      all:          Type.Optional(Type.Boolean({ description: 'Include done and cancelled tasks' })),
 
       // get / status / log / update / delete
       id: Type.Optional(Type.String({ description: 'Task ID (or unique prefix)' })),
 
       // add / update
-      title: Type.Optional(Type.String({ description: 'Task title' })),
-      priority: Type.Optional(Type.Number({ minimum: 1, maximum: 3, description: '1=low 2=medium 3=high' })),
+      title:       Type.Optional(Type.String({ description: 'Task title' })),
+      description: Type.Optional(Type.String({ description: 'Task body / PRD content' })),
+      parentId:    Type.Optional(Type.String({ description: 'Parent task ID for subtasks' })),
+      tags:        Type.Optional(Type.Array(Type.String(), { description: 'Project/context labels e.g. ["snapcap", "highfive"]' })),
+      priority:    Type.Optional(Type.Number({ minimum: 1, maximum: 3, description: '1=low 2=medium 3=high' })),
 
       // log
-      text: Type.Optional(Type.String({ description: 'Note text to append to the task log' })),
+      text:   Type.Optional(Type.String({ description: 'Note text to append to the task log' })),
       author: Type.Optional(AuthorEnum()),
 
       // status
@@ -70,6 +74,9 @@ export default function (pi: ExtensionAPI) {
         } else if (params.filterStatus) {
           tasks = tasks.filter(t => t.status === params.filterStatus);
         }
+        if (params.filterTag) {
+          tasks = tasks.filter(t => t.tags.includes(params.filterTag!));
+        }
         return {
           content: [{ type: 'text', text: tasks.length === 0 ? 'No tasks.' : JSON.stringify(tasks, null, 2) }],
           details: { tasks },
@@ -81,9 +88,10 @@ export default function (pi: ExtensionAPI) {
         if (!params.id) throw new Error('id is required for get');
         const task = findTask(store, params.id);
         if (!task) throw new Error(`Task not found: ${params.id}`);
+        const children = store.tasks.filter(t => t.parentId === task.id);
         return {
-          content: [{ type: 'text', text: JSON.stringify(task, null, 2) }],
-          details: { task },
+          content: [{ type: 'text', text: JSON.stringify({ ...task, subtasks: children }, null, 2) }],
+          details: { task, subtasks: children },
         };
       }
 
@@ -94,6 +102,9 @@ export default function (pi: ExtensionAPI) {
         const task: Task = {
           id: generateId(),
           title: params.title,
+          description: params.description,
+          parentId: params.parentId,
+          tags: params.tags ?? [],
           priority: (params.priority ?? 1) as Priority,
           status: 'open',
           createdAt: at,
@@ -145,8 +156,11 @@ export default function (pi: ExtensionAPI) {
         if (!params.id) throw new Error('id is required for update');
         const task = findTask(store, params.id);
         if (!task) throw new Error(`Task not found: ${params.id}`);
-        if (params.title) task.title = params.title;
-        if (params.priority) task.priority = params.priority as Priority;
+        if (params.title       !== undefined) task.title       = params.title;
+        if (params.description !== undefined) task.description = params.description;
+        if (params.priority    !== undefined) task.priority    = params.priority as Priority;
+        if (params.parentId    !== undefined) task.parentId    = params.parentId;
+        if (params.tags        !== undefined) task.tags        = params.tags;
         task.updatedAt = now();
         writeStore(store);
         return {

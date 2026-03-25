@@ -4,15 +4,16 @@ import type { Status, Priority, Author, Task } from './types.js';
 // ─── ANSI helpers ────────────────────────────────────────────────────────────
 
 const c = {
-  reset:  '\x1b[0m',
-  bold:   '\x1b[1m',
-  dim:    '\x1b[2m',
-  red:    '\x1b[31m',
-  green:  '\x1b[32m',
-  yellow: '\x1b[33m',
-  blue:   '\x1b[34m',
-  cyan:   '\x1b[36m',
-  gray:   '\x1b[90m',
+  reset:   '\x1b[0m',
+  bold:    '\x1b[1m',
+  dim:     '\x1b[2m',
+  red:     '\x1b[31m',
+  green:   '\x1b[32m',
+  yellow:  '\x1b[33m',
+  blue:    '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan:    '\x1b[36m',
+  gray:    '\x1b[90m',
 };
 
 const STATUS_COLOR: Record<Status, string> = {
@@ -45,31 +46,78 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
-function fmtTask(t: Task, showLog = false) {
+function fmtTags(tags: string[]) {
+  if (!tags.length) return '';
+  return tags.map(t => `${c.magenta}#${t}${c.reset}`).join(' ');
+}
+
+function fmtTask(t: Task, showFull = false, allTasks: Task[] = []) {
   const lines: string[] = [];
+
+  // ── header line ──────────────────────────────────────────────────────────
+  const parent = t.parentId ? allTasks.find(p => p.id === t.parentId) : undefined;
+  const parentHint = parent ? `${c.gray}↳ #${parent.id} ${parent.title}${c.reset}  ` : '';
+  const tags = fmtTags(t.tags);
   lines.push(
     `${c.bold}${c.dim}#${t.id}${c.reset}  ${c.bold}${t.title}${c.reset}` +
     `  ${PRIORITY_LABEL[t.priority]}  ${fmtStatus(t.status)}` +
+    (tags ? `  ${tags}` : '') +
     `  ${c.gray}${fmtDate(t.createdAt)}${c.reset}`
   );
-  if (showLog && t.log.length > 0) {
-    for (const e of t.log) {
-      const who = e.author === 'pi' ? `${c.cyan}pi${c.reset}` : `${c.green}kuba${c.reset}`;
-      lines.push(`  ${c.gray}${fmtDate(e.at)}${c.reset} ${who}  ${e.text}`);
+
+  if (showFull) {
+    // ── parent ref ───────────────────────────────────────────────────────
+    if (parentHint) lines.push(`  ${parentHint}`);
+
+    // ── description ──────────────────────────────────────────────────────
+    if (t.description) {
+      lines.push('');
+      for (const line of t.description.split('\n')) {
+        lines.push(`  ${c.dim}${line}${c.reset}`);
+      }
+    }
+
+    // ── log ──────────────────────────────────────────────────────────────
+    if (t.log.length > 0) {
+      lines.push('');
+      for (const e of t.log) {
+        const who = e.author === 'pi' ? `${c.cyan}pi${c.reset}` : `${c.green}kuba${c.reset}`;
+        lines.push(`  ${c.gray}${fmtDate(e.at)}${c.reset} ${who}  ${e.text}`);
+      }
+    }
+
+    // ── subtasks ─────────────────────────────────────────────────────────
+    const children = allTasks.filter(c => c.parentId === t.id);
+    if (children.length > 0) {
+      lines.push('');
+      lines.push(`  ${c.dim}Subtasks:${c.reset}`);
+      for (const child of children) {
+        lines.push(`    ${c.dim}#${child.id}${c.reset}  ${child.title}  ${fmtStatus(child.status)}`);
+      }
     }
   }
+
   return lines.join('\n');
 }
 
 // ─── Commands ────────────────────────────────────────────────────────────────
 
-export function cmdAdd(title: string, opts: { note?: string; priority?: number }) {
+export function cmdAdd(title: string, opts: {
+  description?: string;
+  note?: string;
+  priority?: number;
+  parentId?: string;
+  tags?: string[];
+}) {
   const store = readStore();
   const now = new Date().toISOString();
   const priority = (opts.priority ?? 1) as Priority;
   const task: Task = {
     id: generateId(),
     title,
+    description: opts.description,
+    parentId: opts.parentId,
+    tags: opts.tags ?? [],
     priority,
     status: 'open',
     createdAt: now,
@@ -82,7 +130,7 @@ export function cmdAdd(title: string, opts: { note?: string; priority?: number }
   return task;
 }
 
-export function cmdList(opts: { status?: string; all?: boolean }) {
+export function cmdList(opts: { status?: string; all?: boolean; tag?: string }) {
   const store = readStore();
   let tasks = store.tasks;
 
@@ -92,12 +140,16 @@ export function cmdList(opts: { status?: string; all?: boolean }) {
     tasks = tasks.filter(t => t.status === opts.status);
   }
 
+  if (opts.tag) {
+    tasks = tasks.filter(t => t.tags.includes(opts.tag!));
+  }
+
   if (tasks.length === 0) {
     console.log(`${c.gray}No tasks.${c.reset}`);
     return [];
   }
 
-  for (const t of tasks) console.log(fmtTask(t));
+  for (const t of tasks) console.log(fmtTask(t, false, store.tasks));
   return tasks;
 }
 
@@ -108,7 +160,7 @@ export function cmdShow(id: string) {
     console.error(`${c.red}Task not found: ${id}${c.reset}`);
     process.exit(1);
   }
-  console.log(fmtTask(task, true));
+  console.log(fmtTask(task, true, store.tasks));
   return task;
 }
 
@@ -132,15 +184,24 @@ export function cmdStatus(id: string, status: string) {
   return task;
 }
 
-export function cmdUpdate(id: string, opts: { title?: string; priority?: number }) {
+export function cmdUpdate(id: string, opts: {
+  title?: string;
+  description?: string;
+  priority?: number;
+  parentId?: string;
+  tags?: string[];
+}) {
   const store = readStore();
   const task = findTask(store, id);
   if (!task) {
     console.error(`${c.red}Task not found: ${id}${c.reset}`);
     process.exit(1);
   }
-  if (opts.title) task.title = opts.title;
-  if (opts.priority) task.priority = opts.priority as Priority;
+  if (opts.title !== undefined)       task.title = opts.title;
+  if (opts.description !== undefined) task.description = opts.description;
+  if (opts.priority !== undefined)    task.priority = opts.priority as Priority;
+  if (opts.parentId !== undefined)    task.parentId = opts.parentId;
+  if (opts.tags !== undefined)        task.tags = opts.tags;
   task.updatedAt = new Date().toISOString();
   writeStore(store);
   console.log(`${c.green}✓${c.reset} Updated #${task.id}`);
