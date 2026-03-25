@@ -79,10 +79,57 @@ function StatusPicker({ current, onSelect }) {
   );
 }
 
-function TaskCard({ task, allTasks, onStatusChange }) {
+function SubtaskRow({ task, onStatusChange }) {
+  const sm = STATUS_META[task.status];
   const [picking, setPicking] = useState(false);
-  const parent = task.parentId ? allTasks.find(t => t.id === task.parentId) : null;
+
+  const handleSelect = useCallback((newStatus) => {
+    setPicking(false);
+    if (newStatus !== task.status) onStatusChange(task.id, newStatus);
+  }, [task.id, task.status, onStatusChange]);
+
+  return (
+    <div style={{
+      display:    'flex',
+      alignItems: 'flex-start',
+      gap:        8,
+      padding:    '5px 0',
+      borderTop:  '1px solid var(--border)',
+    }}>
+      {/* status dot — clickable */}
+      <div style={{ position: 'relative', flexShrink: 0, paddingTop: 1 }}>
+        <span
+          onClick={() => setPicking(p => !p)}
+          style={{ ...chip(sm.color), cursor: 'pointer', userSelect: 'none', padding: '2px 6px' }}
+          title={sm.label}
+        >
+          {sm.label.split(' ')[0]}
+        </span>
+        {picking && (
+          <>
+            <div onClick={() => setPicking(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
+            <StatusPicker current={task.status} onSelect={handleSelect} />
+          </>
+        )}
+      </div>
+      {/* title */}
+      <span style={{
+        fontSize:   '12px',
+        color:      task.status === 'done' ? 'var(--fg3)' : 'var(--fg2)',
+        lineHeight: 1.4,
+        textDecoration: task.status === 'done' ? 'line-through' : 'none',
+      }}>
+        {task.title}
+      </span>
+    </div>
+  );
+}
+
+function TaskCard({ task, allTasks, onStatusChange }) {
+  const [picking, setPicking]   = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const subtasks = allTasks.filter(t => t.parentId === task.id);
+  const doneCount = subtasks.filter(t => t.status === 'done').length;
   const sm = STATUS_META[task.status];
   const pm = PRIORITY_META[task.priority];
 
@@ -93,21 +140,14 @@ function TaskCard({ task, allTasks, onStatusChange }) {
 
   return (
     <div style={{
-      background:   'var(--surface)',
-      border:       '1px solid var(--border)',
-      borderRadius: 'var(--radius)',
-      padding:      '10px 12px',
-      display:      'flex',
-      flexDirection:'column',
-      gap:          7,
+      background:    'var(--surface)',
+      border:        '1px solid var(--border)',
+      borderRadius:  'var(--radius)',
+      padding:       '10px 12px',
+      display:       'flex',
+      flexDirection: 'column',
+      gap:           7,
     }}>
-      {/* parent hint */}
-      {parent && (
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--fg3)' }}>
-          ↳ {parent.title.length > 36 ? parent.title.slice(0, 36) + '…' : parent.title}
-        </div>
-      )}
-
       {/* title */}
       <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--fg)', lineHeight: 1.35 }}>
         {task.title}
@@ -119,11 +159,6 @@ function TaskCard({ task, allTasks, onStatusChange }) {
         {task.tags.map(tag => (
           <span key={tag} style={chip('var(--accent)')}>#{tag}</span>
         ))}
-        {subtasks.length > 0 && (
-          <span style={chip('var(--fg3)')}>
-            {subtasks.filter(t => t.status === 'done').length}/{subtasks.length} subtasks
-          </span>
-        )}
         {task.log.length > 0 && (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--fg3)' }}>
             {task.log.length} note{task.log.length !== 1 ? 's' : ''}
@@ -131,24 +166,52 @@ function TaskCard({ task, allTasks, onStatusChange }) {
         )}
       </div>
 
-      {/* status chip — clickable */}
-      <div style={{ position: 'relative', alignSelf: 'flex-start' }}>
-        <span
-          onClick={() => setPicking(p => !p)}
-          style={{ ...chip(sm.color), cursor: 'pointer', userSelect: 'none' }}
-        >
-          {sm.label} ▾
-        </span>
-        {picking && (
-          <>
-            <div
-              onClick={() => setPicking(false)}
-              style={{ position: 'fixed', inset: 0, zIndex: 99 }}
-            />
-            <StatusPicker current={task.status} onSelect={handleSelect} />
-          </>
+      {/* status + subtask toggle row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {/* status chip */}
+        <div style={{ position: 'relative' }}>
+          <span
+            onClick={() => setPicking(p => !p)}
+            style={{ ...chip(sm.color), cursor: 'pointer', userSelect: 'none' }}
+          >
+            {sm.label} ▾
+          </span>
+          {picking && (
+            <>
+              <div onClick={() => setPicking(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
+              <StatusPicker current={task.status} onSelect={handleSelect} />
+            </>
+          )}
+        </div>
+
+        {/* subtask toggle */}
+        {subtasks.length > 0 && (
+          <button
+            onClick={() => setExpanded(v => !v)}
+            style={{
+              fontFamily:   'var(--font-mono)',
+              fontSize:     '11px',
+              cursor:       'pointer',
+              padding:      '2px 7px',
+              borderRadius: '4px',
+              border:       '1px solid var(--border)',
+              background:   'transparent',
+              color:        doneCount === subtasks.length ? 'var(--idle)' : 'var(--fg3)',
+            }}
+          >
+            {expanded ? '▴' : '▾'} {doneCount}/{subtasks.length} subtasks
+          </button>
         )}
       </div>
+
+      {/* subtask list — expanded */}
+      {expanded && subtasks.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {subtasks.map(sub => (
+            <SubtaskRow key={sub.id} task={sub} onStatusChange={onStatusChange} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -323,7 +386,7 @@ export default function TasksPage() {
           <Column
             key={status}
             status={status}
-            tasks={visible.filter(t => t.status === status)}
+            tasks={visible.filter(t => t.status === status && !t.parentId)}
             allTasks={tasks}
             onStatusChange={handleStatusChange}
           />
