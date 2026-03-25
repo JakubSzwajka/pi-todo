@@ -209,9 +209,8 @@ function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected, draggi
       </div>
 
       {/* status + subtask toggle */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <StatusChip taskId={task.id} status={task.status} onStatusChange={onStatusChange} />
-        <CopyButton text={`task #${task.id}`} />
         {subtasks.length > 0 && (
           <button onClick={() => setExpanded(v => !v)} style={{
             fontFamily:   'var(--font-mono)',
@@ -226,6 +225,8 @@ function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected, draggi
             {expanded ? '▴' : '▾'} {doneCount}/{subtasks.length} subtasks
           </button>
         )}
+        <div style={{ flex: 1 }} />
+        <CopyButton text={`task #${task.id}`} />
       </div>
 
       {/* subtask list */}
