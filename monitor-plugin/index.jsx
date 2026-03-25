@@ -538,8 +538,8 @@ export default function TasksPage({ params, setParams }) {
   }, [fetchTasks]);
 
   const handleSelect = useCallback((id) => {
-    setSelectedId(prev => prev === id ? null : id);
-  }, []);
+    setParams({ ...params, task: selectedId === id ? null : id });
+  }, [params, selectedId, setParams]);
 
   const allTags = [...new Set(tasks.flatMap(t => t.tags))].sort();
   const visible = activeTag ? tasks.filter(t => t.tags.includes(activeTag)) : tasks;
