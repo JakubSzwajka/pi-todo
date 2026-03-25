@@ -335,6 +335,35 @@ function Description({ text }) {
   );
 }
 
+// ── CopyButton ────────────────────────────────────────────────────────────────
+
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+
+  const handle = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [text]);
+
+  return (
+    <button onClick={handle} title={`Copy: ${text}`} style={{
+      fontFamily:   'var(--font-mono)',
+      fontSize:     '11px',
+      cursor:       'pointer',
+      padding:      '2px 8px',
+      borderRadius: '4px',
+      border:       `1px solid ${copied ? 'color-mix(in srgb, var(--idle) 40%, transparent)' : 'var(--border)'}`,
+      background:    copied ? 'color-mix(in srgb, var(--idle) 12%, transparent)' : 'transparent',
+      color:         copied ? 'var(--idle)' : 'var(--fg3)',
+      transition:   'all 0.15s',
+    }}>
+      {copied ? '✓ copied' : '⎘ copy ref'}
+    </button>
+  );
+}
+
 // ── DetailPanel ───────────────────────────────────────────────────────────────
 
 function DetailPanel({ taskId, allTasks, onStatusChange, onClose }) {
@@ -407,6 +436,7 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose }) {
           #{task.id}
         </span>
         <div style={{ flex: 1 }} />
+        <CopyButton text={`task #${task.id}`} />
         <button onClick={onClose} style={{
           fontFamily: 'var(--font-mono)', fontSize: '13px', cursor: 'pointer',
           background: 'transparent', border: 'none', color: 'var(--fg3)', lineHeight: 1,
