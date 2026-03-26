@@ -20,6 +20,8 @@ const STATUS_COLOR: Record<Status, string> = {
   open:        c.blue,
   in_progress: c.yellow,
   review:      c.cyan,
+  testing:     c.magenta,
+  waiting:     c.red,
   done:        c.green,
   cancelled:   c.gray,
 };
@@ -28,6 +30,8 @@ const STATUS_LABEL: Record<Status, string> = {
   open:        '○ open',
   in_progress: '◑ in_progress',
   review:      '◉ review',
+  testing:     '⬡ testing',
+  waiting:     '◌ waiting',
   done:        '● done',
   cancelled:   '✕ cancelled',
 };
@@ -165,7 +169,7 @@ export function cmdShow(id: string) {
 }
 
 export function cmdStatus(id: string, status: string) {
-  const valid: Status[] = ['open', 'in_progress', 'review', 'done', 'cancelled'];
+  const valid: Status[] = ['open', 'in_progress', 'review', 'testing', 'waiting', 'done', 'cancelled'];
   if (!valid.includes(status as Status)) {
     console.error(`${c.red}Invalid status. Use: ${valid.join(' | ')}${c.reset}`);
     process.exit(1);

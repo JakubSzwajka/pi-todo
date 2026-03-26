@@ -44,7 +44,7 @@ Commands:
   log <id> <note text>
   delete <id>
 
-Statuses:   open | in_progress | review | done | cancelled
+Statuses:   open | in_progress | review | testing | waiting | done | cancelled
 Priorities: 1 (low) | 2 (medium) | 3 (high)
 `;
 

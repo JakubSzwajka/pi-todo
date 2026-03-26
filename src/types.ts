@@ -1,4 +1,4 @@
-export type Status = 'open' | 'in_progress' | 'review' | 'done' | 'cancelled';
+export type Status = 'open' | 'in_progress' | 'review' | 'testing' | 'waiting' | 'done' | 'cancelled';
 export type Priority = 1 | 2 | 3;
 export type Author = 'kuba' | 'pi';
 
