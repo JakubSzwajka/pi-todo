@@ -24,7 +24,7 @@ function parseArgs(argv: string[]) {
   return { pos, flags };
 }
 
-function parseTags(raw: string): string[] {
+function parseCsv(raw: string): string[] {
   return raw.split(',').map(t => t.trim()).filter(Boolean);
 }
 
@@ -35,12 +35,12 @@ Usage: todo <command> [options]
 
 Commands:
   add <title> [--description <text>]
-              [--parent <id>] [--tags <tag1,tag2>] [--note <text>]
+              [--parent <id>] [--depends-on <id1,id2>] [--tags <tag1,tag2>] [--note <text>]
   list [--status <status>] [--tag <tag>] [--all]
   show <id>
   status <id> <status>
   update <id> [--title <text>] [--description <text>]
-              [--parent <id>] [--tags <tag1,tag2>]
+              [--parent <id>] [--depends-on <id1,id2>] [--tags <tag1,tag2>]
   log <id> <note text>
   delete <id>
 
@@ -60,7 +60,8 @@ switch (cmd) {
       description: flags['description'] as string | undefined,
       note:        flags['note']        as string | undefined,
       parentId:    flags['parent']      as string | undefined,
-      tags:        flags['tags']        ? parseTags(flags['tags'] as string) : undefined,
+      dependsOnIds: flags['depends-on'] ? parseCsv(flags['depends-on'] as string) : undefined,
+      tags:        flags['tags']        ? parseCsv(flags['tags'] as string) : undefined,
     });
     break;
   }
@@ -88,7 +89,8 @@ switch (cmd) {
       title:       flags['title']       as string | undefined,
       description: flags['description'] as string | undefined,
       parentId:    flags['parent']      as string | undefined,
-      tags:        flags['tags']        ? parseTags(flags['tags'] as string) : undefined,
+      dependsOnIds: flags['depends-on'] ? parseCsv(flags['depends-on'] as string) : undefined,
+      tags:        flags['tags']        ? parseCsv(flags['tags'] as string) : undefined,
     });
     break;
   }

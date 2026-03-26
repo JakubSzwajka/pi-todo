@@ -1,12 +1,22 @@
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 import { Type } from '@sinclair/typebox';
-import { readStore, writeStore, generateId, findTask } from './src/store.js';
+import {
+  readStore,
+  writeStore,
+  generateId,
+  findTask,
+  validateDependsOnIds,
+  getUnresolvedDependencies,
+  statusRequiresResolvedDependencies,
+} from './src/store.js';
 import type { Status, Author, Task } from './src/types.js';
 
 const StatusEnum = () => Type.Union([
   Type.Literal('open'),
   Type.Literal('in_progress'),
   Type.Literal('review'),
+  Type.Literal('testing'),
+  Type.Literal('waiting'),
   Type.Literal('done'),
   Type.Literal('cancelled'),
 ]);
@@ -51,7 +61,8 @@ export default function (pi: ExtensionAPI) {
       title:       Type.Optional(Type.String({ description: 'Task title' })),
       description: Type.Optional(Type.String({ description: 'Task body / PRD content' })),
       parentId:    Type.Optional(Type.String({ description: 'Parent task ID for subtasks' })),
-      tags:        Type.Optional(Type.Array(Type.String(), { description: 'Project/context labels e.g. ["snapcap", "highfive"]' })),
+      tags:         Type.Optional(Type.Array(Type.String(), { description: 'Project/context labels e.g. ["snapcap", "highfive"]' })),
+      dependsOnIds: Type.Optional(Type.Array(Type.String(), { description: 'Task IDs this task depends on; all must be done before advancing' })),
 
       // log
       text:   Type.Optional(Type.String({ description: 'Note text to append to the task log' })),
@@ -88,9 +99,10 @@ export default function (pi: ExtensionAPI) {
         const task = findTask(store, params.id);
         if (!task) throw new Error(`Task not found: ${params.id}`);
         const children = store.tasks.filter(t => t.parentId === task.id);
+        const blockedBy = store.tasks.filter(t => (t.dependsOnIds ?? []).includes(task.id));
         return {
-          content: [{ type: 'text', text: JSON.stringify({ ...task, subtasks: children }, null, 2) }],
-          details: { task, subtasks: children },
+          content: [{ type: 'text', text: JSON.stringify({ ...task, subtasks: children, blockedBy }, null, 2) }],
+          details: { task, subtasks: children, blockedBy },
         };
       }
 
@@ -103,12 +115,15 @@ export default function (pi: ExtensionAPI) {
           title: params.title,
           description: params.description,
           parentId: params.parentId,
+          dependsOnIds: [...new Set(params.dependsOnIds ?? [])],
           tags: params.tags ?? [],
           status: 'open',
           createdAt: at,
           updatedAt: at,
           log: params.text ? [{ at, author: (params.author ?? 'pi') as Author, text: params.text }] : [],
         };
+        const dependencyError = validateDependsOnIds(store, task, task.dependsOnIds);
+        if (dependencyError) throw new Error(dependencyError);
         store.tasks.push(task);
         writeStore(store);
         return {
@@ -123,8 +138,13 @@ export default function (pi: ExtensionAPI) {
         if (!params.status) throw new Error('status is required for status action');
         const task = findTask(store, params.id);
         if (!task) throw new Error(`Task not found: ${params.id}`);
+        const nextStatus = params.status as Status;
+        const unresolved = statusRequiresResolvedDependencies(nextStatus) ? getUnresolvedDependencies(store, task) : [];
+        if (unresolved.length > 0) {
+          throw new Error(`Cannot move #${task.id} to ${nextStatus}; unresolved dependencies: ${unresolved.map(t => `#${t.id}`).join(', ')}`);
+        }
         const prev = task.status;
-        task.status = params.status as Status;
+        task.status = nextStatus;
         task.updatedAt = now();
         writeStore(store);
         return {
@@ -154,10 +174,21 @@ export default function (pi: ExtensionAPI) {
         if (!params.id) throw new Error('id is required for update');
         const task = findTask(store, params.id);
         if (!task) throw new Error(`Task not found: ${params.id}`);
-        if (params.title       !== undefined) task.title       = params.title;
-        if (params.description !== undefined) task.description = params.description;
-        if (params.parentId    !== undefined) task.parentId    = params.parentId;
-        if (params.tags        !== undefined) task.tags        = params.tags;
+        const nextTask: Task = {
+          ...task,
+          title: params.title ?? task.title,
+          description: params.description ?? task.description,
+          parentId: params.parentId ?? task.parentId,
+          dependsOnIds: params.dependsOnIds ?? task.dependsOnIds ?? [],
+          tags: params.tags ?? task.tags,
+        };
+        const dependencyError = validateDependsOnIds(store, nextTask, nextTask.dependsOnIds);
+        if (dependencyError) throw new Error(dependencyError);
+        task.title = nextTask.title;
+        task.description = nextTask.description;
+        task.parentId = nextTask.parentId;
+        task.dependsOnIds = nextTask.dependsOnIds;
+        task.tags = nextTask.tags;
         task.updatedAt = now();
         writeStore(store);
         return {

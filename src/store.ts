@@ -1,6 +1,6 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import type { Store, Task, LogEntry, Author, Status } from './types.js';
 
 export const STORE_PATH = join(homedir(), '.pi', '.pi-todo.json');
@@ -43,6 +43,9 @@ function normalizeTask(value: unknown): Task | null {
     title: raw.title,
     description: typeof raw.description === 'string' ? raw.description : undefined,
     parentId: typeof raw.parentId === 'string' ? raw.parentId : undefined,
+    dependsOnIds: Array.isArray(raw.dependsOnIds)
+      ? [...new Set(raw.dependsOnIds.filter((id): id is string => typeof id === 'string'))]
+      : [],
     tags: Array.isArray(raw.tags) ? raw.tags.filter((tag): tag is string => typeof tag === 'string') : [],
     status: normalizeStatus(raw.status),
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : new Date().toISOString(),
@@ -71,6 +74,7 @@ export function readStore(): Store {
 }
 
 export function writeStore(store: Store): void {
+  mkdirSync(dirname(STORE_PATH), { recursive: true });
   writeFileSync(STORE_PATH, JSON.stringify(normalizeStore(store), null, 2), 'utf8');
 }
 
@@ -80,4 +84,33 @@ export function generateId(): string {
 
 export function findTask(store: Store, id: string): Task | undefined {
   return store.tasks.find(t => t.id === id || t.id.startsWith(id));
+}
+
+export function resolveTaskIds(store: Store, ids: string[] | undefined): Task[] {
+  if (!ids?.length) return [];
+  return ids.map(id => findTask(store, id)).filter((task): task is Task => task !== undefined);
+}
+
+export function validateDependsOnIds(store: Store, task: Task, dependsOnIds: string[] | undefined): string | null {
+  const normalized = [...new Set((dependsOnIds ?? []).map(id => id.trim()).filter(Boolean))];
+  if (normalized.includes(task.id)) return 'A task cannot depend on itself';
+
+  for (const dependencyId of normalized) {
+    const dependency = findTask(store, dependencyId);
+    if (!dependency) return `Dependency task not found: ${dependencyId}`;
+    if (dependency.id === task.id) return 'A task cannot depend on itself';
+    if (dependency.parentId !== task.parentId) {
+      return `Dependency #${dependency.id} must share the same parent as #${task.id}`;
+    }
+  }
+
+  return null;
+}
+
+export function getUnresolvedDependencies(store: Store, task: Task): Task[] {
+  return resolveTaskIds(store, task.dependsOnIds).filter(dependency => dependency.status !== 'done');
+}
+
+export function statusRequiresResolvedDependencies(status: Status): boolean {
+  return ['in_progress', 'review', 'testing', 'done'].includes(status);
 }

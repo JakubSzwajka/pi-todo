@@ -1,4 +1,12 @@
-import { readStore, writeStore, generateId, findTask } from './store.js';
+import {
+  readStore,
+  writeStore,
+  generateId,
+  findTask,
+  validateDependsOnIds,
+  getUnresolvedDependencies,
+  statusRequiresResolvedDependencies,
+} from './store.js';
 import type { Status, Author, Task } from './types.js';
 
 // ─── ANSI helpers ────────────────────────────────────────────────────────────
@@ -54,6 +62,9 @@ function fmtTask(t: Task, showFull = false, allTasks: Task[] = []) {
 
   // ── header line ──────────────────────────────────────────────────────────
   const parent = t.parentId ? allTasks.find(p => p.id === t.parentId) : undefined;
+  const dependencies = allTasks.filter(candidate => (t.dependsOnIds ?? []).includes(candidate.id));
+  const blockedBy = allTasks.filter(candidate => (candidate.dependsOnIds ?? []).includes(t.id));
+  const unresolved = dependencies.filter(candidate => candidate.status !== 'done');
   const parentHint = parent ? `${c.gray}↳ #${parent.id} ${parent.title}${c.reset}  ` : '';
   const tags = fmtTags(t.tags);
   lines.push(
@@ -66,6 +77,27 @@ function fmtTask(t: Task, showFull = false, allTasks: Task[] = []) {
   if (showFull) {
     // ── parent ref ───────────────────────────────────────────────────────
     if (parentHint) lines.push(`  ${parentHint}`);
+
+    // ── dependency refs ─────────────────────────────────────────────────
+    if (dependencies.length > 0) {
+      lines.push('');
+      lines.push(`  ${c.dim}Depends on:${c.reset}`);
+      for (const dependency of dependencies) {
+        const unresolvedMark = dependency.status === 'done' ? `${c.green}✓${c.reset}` : `${c.yellow}!${c.reset}`;
+        lines.push(`    ${unresolvedMark} ${c.dim}#${dependency.id}${c.reset}  ${dependency.title}  ${fmtStatus(dependency.status)}`);
+      }
+      if (unresolved.length > 0) {
+        lines.push(`  ${c.yellow}Blocked by ${unresolved.map(task => `#${task.id}`).join(', ')}${c.reset}`);
+      }
+    }
+
+    if (blockedBy.length > 0) {
+      lines.push('');
+      lines.push(`  ${c.dim}Blocking:${c.reset}`);
+      for (const dependent of blockedBy) {
+        lines.push(`    ${c.dim}#${dependent.id}${c.reset}  ${dependent.title}  ${fmtStatus(dependent.status)}`);
+      }
+    }
 
     // ── description ──────────────────────────────────────────────────────
     if (t.description) {
@@ -104,6 +136,7 @@ export function cmdAdd(title: string, opts: {
   description?: string;
   note?: string;
   parentId?: string;
+  dependsOnIds?: string[];
   tags?: string[];
 }) {
   const store = readStore();
@@ -113,12 +146,18 @@ export function cmdAdd(title: string, opts: {
     title,
     description: opts.description,
     parentId: opts.parentId,
+    dependsOnIds: [...new Set(opts.dependsOnIds ?? [])],
     tags: opts.tags ?? [],
     status: 'open',
     createdAt: now,
     updatedAt: now,
     log: opts.note ? [{ at: now, author: 'kuba', text: opts.note }] : [],
   };
+  const dependencyError = validateDependsOnIds(store, task, task.dependsOnIds);
+  if (dependencyError) {
+    console.error(`${c.red}${dependencyError}${c.reset}`);
+    process.exit(1);
+  }
   store.tasks.push(task);
   writeStore(store);
   console.log(`${c.green}✓${c.reset} Added ${c.bold}#${task.id}${c.reset} — ${task.title}`);
@@ -171,11 +210,17 @@ export function cmdStatus(id: string, status: string) {
     console.error(`${c.red}Task not found: ${id}${c.reset}`);
     process.exit(1);
   }
+  const nextStatus = status as Status;
+  const unresolved = statusRequiresResolvedDependencies(nextStatus) ? getUnresolvedDependencies(store, task) : [];
+  if (unresolved.length > 0) {
+    console.error(`${c.red}Cannot move #${task.id} to ${nextStatus}; unresolved dependencies: ${unresolved.map(t => `#${t.id}`).join(', ')}${c.reset}`);
+    process.exit(1);
+  }
   const prev = task.status;
-  task.status = status as Status;
+  task.status = nextStatus;
   task.updatedAt = new Date().toISOString();
   writeStore(store);
-  console.log(`${c.green}✓${c.reset} #${task.id}  ${fmtStatus(prev)} → ${fmtStatus(status as Status)}`);
+  console.log(`${c.green}✓${c.reset} #${task.id}  ${fmtStatus(prev)} → ${fmtStatus(nextStatus)}`);
   return task;
 }
 
@@ -183,6 +228,7 @@ export function cmdUpdate(id: string, opts: {
   title?: string;
   description?: string;
   parentId?: string;
+  dependsOnIds?: string[];
   tags?: string[];
 }) {
   const store = readStore();
@@ -191,10 +237,24 @@ export function cmdUpdate(id: string, opts: {
     console.error(`${c.red}Task not found: ${id}${c.reset}`);
     process.exit(1);
   }
-  if (opts.title !== undefined)       task.title = opts.title;
-  if (opts.description !== undefined) task.description = opts.description;
-  if (opts.parentId !== undefined)    task.parentId = opts.parentId;
-  if (opts.tags !== undefined)        task.tags = opts.tags;
+  const nextTask: Task = {
+    ...task,
+    title: opts.title ?? task.title,
+    description: opts.description ?? task.description,
+    parentId: opts.parentId ?? task.parentId,
+    dependsOnIds: opts.dependsOnIds ?? task.dependsOnIds ?? [],
+    tags: opts.tags ?? task.tags,
+  };
+  const dependencyError = validateDependsOnIds(store, nextTask, nextTask.dependsOnIds);
+  if (dependencyError) {
+    console.error(`${c.red}${dependencyError}${c.reset}`);
+    process.exit(1);
+  }
+  task.title = nextTask.title;
+  task.description = nextTask.description;
+  task.parentId = nextTask.parentId;
+  task.dependsOnIds = nextTask.dependsOnIds;
+  task.tags = nextTask.tags;
   task.updatedAt = new Date().toISOString();
   writeStore(store);
   console.log(`${c.green}✓${c.reset} Updated #${task.id}`);

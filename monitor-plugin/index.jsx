@@ -38,6 +38,122 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
+function getDependencies(task, allTasks) {
+  return allTasks.filter(candidate => (task.dependsOnIds ?? []).includes(candidate.id));
+}
+
+function getBlockedBy(task, allTasks) {
+  return allTasks.filter(candidate => (candidate.dependsOnIds ?? []).includes(task.id));
+}
+
+function getUnresolvedDependencies(task, allTasks) {
+  return getDependencies(task, allTasks).filter(candidate => candidate.status !== 'done');
+}
+
+// Sort a set of sibling subtasks in dependency order (parents before children).
+// Handles cycles by visiting remaining tasks at the end.
+function topoSortSubtasks(subtasks) {
+  const ids = new Set(subtasks.map(t => t.id));
+  const visited = new Set();
+  const result = [];
+  function visit(task) {
+    if (visited.has(task.id)) return;
+    visited.add(task.id);
+    for (const depId of (task.dependsOnIds ?? [])) {
+      if (!ids.has(depId)) continue;
+      const dep = subtasks.find(t => t.id === depId);
+      if (dep) visit(dep);
+    }
+    result.push(task);
+  }
+  for (const t of subtasks) visit(t);
+  return result;
+}
+
+function DependencySelect({ task, candidates, onDependencyChange }) {
+  const [open, setOpen] = useState(false);
+  const selectedCount = (task.dependsOnIds ?? []).length;
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: '11px',
+          cursor: 'pointer',
+          padding: '4px 10px',
+          borderRadius: '6px',
+          border: '1px solid var(--border)',
+          background: open ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'var(--surface)',
+          color: open ? 'var(--accent)' : 'var(--fg2)',
+        }}
+      >
+        dependencies ▾ {selectedCount > 0 ? `(${selectedCount})` : ''}
+      </button>
+
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
+          <div style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            left: 0,
+            zIndex: 100,
+            minWidth: 320,
+            maxWidth: 460,
+            maxHeight: 320,
+            overflowY: 'auto',
+            background: 'var(--surface2)',
+            border: '1px solid var(--border2)',
+            borderRadius: 'var(--radius)',
+            padding: '8px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          }}>
+            {candidates.length === 0 ? (
+              <div style={{ fontSize: '12px', color: 'var(--fg3)' }}>No sibling tasks available.</div>
+            ) : candidates.map(candidate => {
+              const selected = (task.dependsOnIds ?? []).includes(candidate.id);
+              const blocked = candidate.status !== 'done';
+              return (
+                <label
+                  key={candidate.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 8,
+                    padding: '6px 8px',
+                    borderRadius: '6px',
+                    background: selected ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'transparent',
+                    border: `1px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    onChange={e => onDependencyChange(task.id, candidate.id, e.target.checked)}
+                    style={{ marginTop: 2 }}
+                  />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+                    <span style={{ fontSize: '12px', color: 'var(--fg)', overflowWrap: 'anywhere' }}>{candidate.title}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>
+                      #{candidate.id} · {candidate.status}{blocked ? ' · unfinished' : ''}
+                    </span>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── StatusPicker ──────────────────────────────────────────────────────────────
 
 function StatusPicker({ current, onSelect }) {
@@ -104,9 +220,11 @@ function StatusChip({ taskId, status, onStatusChange }) {
 
 // ── SubtaskRow (in board card) ────────────────────────────────────────────────
 
-function SubtaskRow({ task, onStatusChange, onSelect }) {
+function SubtaskRow({ task, allTasks, onStatusChange, onSelect }) {
   const sm = STATUS_META[task.status];
   const [picking, setPicking] = useState(false);
+  const dependencies = getDependencies(task, allTasks);
+  const unresolved = dependencies.filter(candidate => candidate.status !== 'done');
 
   const handleSelect = useCallback((newStatus) => {
     setPicking(false);
@@ -134,22 +252,34 @@ function SubtaskRow({ task, onStatusChange, onSelect }) {
           </>
         )}
       </div>
-      <span
-        onClick={() => onSelect(task.id)}
-        style={{
-          fontSize:       '12px',
-          color:          task.status === 'done' ? 'var(--fg3)' : 'var(--fg2)',
-          lineHeight:     1.4,
-          textDecoration: task.status === 'done' ? 'line-through' : 'none',
-          cursor:         'pointer',
-          minWidth:       0,
-          overflowWrap:   'anywhere',
-        }}
-        onMouseEnter={e => e.target.style.color = 'var(--accent)'}
-        onMouseLeave={e => e.target.style.color = task.status === 'done' ? 'var(--fg3)' : 'var(--fg2)'}
-      >
-        {task.title}
-      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+        <span
+          onClick={() => onSelect(task.id)}
+          style={{
+            fontSize:       '12px',
+            color:          task.status === 'done' ? 'var(--fg3)' : 'var(--fg2)',
+            lineHeight:     1.4,
+            textDecoration: task.status === 'done' ? 'line-through' : 'none',
+            cursor:         'pointer',
+            minWidth:       0,
+            overflowWrap:   'anywhere',
+          }}
+          onMouseEnter={e => e.target.style.color = 'var(--accent)'}
+          onMouseLeave={e => e.target.style.color = task.status === 'done' ? 'var(--fg3)' : 'var(--fg2)'}
+        >
+          {task.title}
+        </span>
+        {(dependencies.length > 0 || unresolved.length > 0) && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {unresolved.length > 0 && <span style={chip('var(--waiting)')}>blocked</span>}
+            {dependencies.map(dep => (
+              <span key={dep.id} style={chip(dep.status === 'done' ? 'var(--idle)' : 'var(--fg3)', { maxWidth: 180 })} title={`${dep.title} — ${dep.status}`}>
+                ← {dep.title}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -160,6 +290,9 @@ function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected, draggi
   const [expanded, setExpanded] = useState(false);
   const subtasks  = allTasks.filter(t => t.parentId === task.id);
   const doneCount = subtasks.filter(t => t.status === 'done').length;
+  const blockedSubtaskCount = subtasks.filter(t => getUnresolvedDependencies(t, allTasks).length > 0).length;
+  const taskDependencies = getDependencies(task, allTasks);
+  const unresolvedTaskDependencies = taskDependencies.filter(t => t.status !== 'done');
   const isDragging = draggingId === task.id;
 
   return (
@@ -202,6 +335,12 @@ function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected, draggi
         {task.tags.map(tag => (
           <span key={tag} style={chip('var(--accent)', { maxWidth: '100%' })}>#{tag}</span>
         ))}
+        {unresolvedTaskDependencies.length > 0 && (
+          <span style={chip('var(--waiting)')}>blocked by {unresolvedTaskDependencies.length}</span>
+        )}
+        {blockedSubtaskCount > 0 && (
+          <span style={chip('hsl(25,80%,60%)')}>{blockedSubtaskCount} blocked subtask{blockedSubtaskCount !== 1 ? 's' : ''}</span>
+        )}
         {task.log.length > 0 && (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--fg3)' }}>
             {task.log.length} note{task.log.length !== 1 ? 's' : ''}
@@ -231,11 +370,21 @@ function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected, draggi
         <CopyButton text={`task #${task.id}`} />
       </div>
 
+      {taskDependencies.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, minWidth: 0 }}>
+          {taskDependencies.map(dep => (
+            <span key={dep.id} style={chip(dep.status === 'done' ? 'var(--idle)' : 'var(--fg3)', { maxWidth: '100%' })} title={`${dep.title} — ${dep.status}`}>
+              depends on ← {dep.title}
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* subtask list */}
       {expanded && subtasks.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {subtasks.map(sub => (
-            <SubtaskRow key={sub.id} task={sub} onStatusChange={onStatusChange} onSelect={onSelect} />
+            <SubtaskRow key={sub.id} task={sub} allTasks={allTasks} onStatusChange={onStatusChange} onSelect={onSelect} />
           ))}
         </div>
       )}
@@ -370,7 +519,7 @@ function CopyButton({ text }) {
 
 // ── DetailPanel ───────────────────────────────────────────────────────────────
 
-function DetailPanel({ taskId, allTasks, onStatusChange, onClose, isOpen }) {
+function DetailPanel({ taskId, allTasks, onStatusChange, onDependencyChange, onClose, isOpen }) {
   const [history, setHistory] = useState([taskId]);
   const currentId = history[history.length - 1];
   const task = allTasks.find(t => t.id === currentId);
@@ -392,6 +541,10 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose, isOpen }) {
 
   const parent   = task.parentId ? allTasks.find(t => t.id === task.parentId) : null;
   const subtasks = allTasks.filter(t => t.parentId === task.id);
+  const dependencies = getDependencies(task, allTasks);
+  const blockedBy = getBlockedBy(task, allTasks);
+  const unresolvedDependencies = dependencies.filter(t => t.status !== 'done');
+  const dependencyCandidates = allTasks.filter(candidate => candidate.id !== task.id && candidate.parentId === task.parentId);
 
   const sectionLabel = {
     fontFamily:    'var(--font-mono)',
@@ -466,6 +619,7 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose, isOpen }) {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
           <StatusChip taskId={task.id} status={task.status} onStatusChange={onStatusChange} />
           {task.tags.map(tag => <span key={tag} style={chip('var(--accent)', { maxWidth: '100%' })}>#{tag}</span>)}
+          {unresolvedDependencies.length > 0 && <span style={chip('var(--waiting)')}>blocked</span>}
         </div>
 
         {/* parent link */}
@@ -487,6 +641,76 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose, isOpen }) {
           </div>
         )}
 
+        {/* dependencies */}
+        {(dependencies.length > 0 || blockedBy.length > 0 || dependencyCandidates.length > 0) && (
+          <div style={divider}>
+            <div style={sectionLabel}>dependencies</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {dependencyCandidates.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: '11px', color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>edit dependencies</div>
+                  <DependencySelect
+                    task={task}
+                    candidates={dependencyCandidates}
+                    onDependencyChange={onDependencyChange}
+                  />
+                </div>
+              )}
+              {dependencies.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div style={{ fontSize: '11px', color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>depends on</div>
+                  {dependencies.map(dep => {
+                    const blocked = dep.status !== 'done';
+                    return (
+                      <div
+                        key={dep.id}
+                        onClick={() => navigate(dep.id)}
+                        style={{
+                          display: 'flex', alignItems: 'flex-start', gap: 8,
+                          padding: '6px 8px', borderRadius: '6px', cursor: 'pointer',
+                          background: 'var(--surface)', border: `1px solid ${blocked ? 'color-mix(in srgb, var(--waiting) 40%, transparent)' : 'var(--border)'}`,
+                        }}
+                      >
+                        <span style={{ ...chip(blocked ? 'var(--waiting)' : 'var(--idle)'), flexShrink: 0, padding: '2px 5px' }}>
+                          {blocked ? 'blocked' : 'ready'}
+                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                          <span style={{ fontSize: '12px', color: 'var(--fg)', overflowWrap: 'anywhere' }}>{dep.title}</span>
+                          <span style={{ fontSize: '11px', color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>#{dep.id} · {dep.status}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {blockedBy.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div style={{ fontSize: '11px', color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>blocking</div>
+                  {blockedBy.map(dep => (
+                    <div
+                      key={dep.id}
+                      onClick={() => navigate(dep.id)}
+                      style={{
+                        display: 'flex', alignItems: 'flex-start', gap: 8,
+                        padding: '6px 8px', borderRadius: '6px', cursor: 'pointer',
+                        background: 'var(--surface)', border: '1px solid var(--border)',
+                      }}
+                    >
+                      <span style={{ ...chip(dep.status === 'done' ? 'var(--idle)' : 'var(--fg3)'), flexShrink: 0, padding: '2px 5px' }}>
+                        {dep.status}
+                      </span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                        <span style={{ fontSize: '12px', color: 'var(--fg)', overflowWrap: 'anywhere' }}>{dep.title}</span>
+                        <span style={{ fontSize: '11px', color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>#{dep.id}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* description */}
         {task.description && (
           <div style={divider}>
@@ -496,50 +720,107 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose, isOpen }) {
         )}
 
         {/* subtasks */}
-        {subtasks.length > 0 && (
-          <div style={divider}>
-            <div style={sectionLabel}>
-              subtasks — {subtasks.filter(t => t.status === 'done').length}/{subtasks.length} done
+        {subtasks.length > 0 && (() => {
+          const sibIds = new Set(subtasks.map(t => t.id));
+          const sorted = topoSortSubtasks(subtasks);
+
+          // Compute depth: 0 for roots, max(parent depths)+1 for children
+          const depths = {};
+          for (const sub of sorted) {
+            const sibDeps = (sub.dependsOnIds ?? []).filter(id => sibIds.has(id));
+            depths[sub.id] = sibDeps.length === 0
+              ? 0
+              : Math.max(...sibDeps.map(id => depths[id] ?? 0)) + 1;
+          }
+
+          const INDENT = 18;
+
+          return (
+            <div style={divider}>
+              <div style={sectionLabel}>
+                subtasks — {subtasks.filter(t => t.status === 'done').length}/{subtasks.length} done
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {sorted.map(sub => {
+                  const depth = depths[sub.id] ?? 0;
+                  const sibDeps = (sub.dependsOnIds ?? []).filter(id => sibIds.has(id));
+                  const isBlocked = sibDeps.some(id => subtasks.find(t => t.id === id)?.status !== 'done');
+                  const sm = STATUS_META[sub.status];
+                  const connColor = isBlocked
+                    ? 'color-mix(in srgb, var(--waiting) 55%, transparent)'
+                    : 'var(--border2)';
+
+                  return (
+                    <div key={sub.id} style={{ display: 'flex', alignItems: 'center' }}>
+
+                      {/* tree connector */}
+                      {depth > 0 && (
+                        <div style={{
+                          flexShrink: 0,
+                          width:      depth * INDENT,
+                          height:     32,
+                          position:   'relative',
+                        }}>
+                          {/* vertical segment from parent */}
+                          <div style={{
+                            position:   'absolute',
+                            left:       (depth - 1) * INDENT + 9,
+                            top:        0,
+                            width:      1.5,
+                            height:     16,
+                            background: connColor,
+                          }} />
+                          {/* horizontal elbow */}
+                          <div style={{
+                            position:     'absolute',
+                            left:         (depth - 1) * INDENT + 9,
+                            top:          16,
+                            width:        INDENT - 9 + 4,
+                            height:       1.5,
+                            background:   connColor,
+                            borderRadius: '0 0 0 2px',
+                          }} />
+                        </div>
+                      )}
+
+                      {/* task row */}
+                      <div
+                        onClick={() => navigate(sub.id)}
+                        style={{
+                          flex:         1,
+                          display:      'flex',
+                          alignItems:   'center',
+                          gap:          8,
+                          padding:      '6px 10px',
+                          borderRadius: '6px',
+                          cursor:       'pointer',
+                          background:   'var(--surface)',
+                          border:       `1px solid ${isBlocked ? 'color-mix(in srgb, var(--waiting) 35%, transparent)' : 'var(--border)'}`,
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.borderColor = isBlocked ? 'color-mix(in srgb, var(--waiting) 55%, transparent)' : 'var(--border2)'}
+                        onMouseLeave={e => e.currentTarget.style.borderColor = isBlocked ? 'color-mix(in srgb, var(--waiting) 35%, transparent)' : 'var(--border)'}
+                      >
+                        <span style={{ ...chip(sm.color), padding: '2px 5px', flexShrink: 0 }}>
+                          {sm.label.split(' ')[0]}
+                        </span>
+                        <span style={{
+                          fontSize:       '12px',
+                          color:          sub.status === 'done' ? 'var(--fg3)' : 'var(--fg)',
+                          textDecoration: sub.status === 'done' ? 'line-through' : 'none',
+                          lineHeight:     1.4,
+                          flex:           1,
+                          overflowWrap:   'anywhere',
+                        }}>
+                          {sub.title}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {subtasks.map(sub => {
-                const ssm = STATUS_META[sub.status];
-                return (
-                  <div
-                    key={sub.id}
-                    onClick={() => navigate(sub.id)}
-                    style={{
-                      display:      'flex',
-                      alignItems:   'flex-start',
-                      gap:          8,
-                      padding:      '6px 8px',
-                      borderRadius: '6px',
-                      cursor:       'pointer',
-                      background:   'var(--surface)',
-                      border:       '1px solid var(--border)',
-                    }}
-                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--border2)'}
-                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
-                  >
-                    <span style={{ ...chip(ssm.color), flexShrink: 0, padding: '2px 5px' }}>
-                      {ssm.label.split(' ')[0]}
-                    </span>
-                    <span style={{
-                      fontSize:       '12px',
-                      color:          sub.status === 'done' ? 'var(--fg3)' : 'var(--fg)',
-                      textDecoration: sub.status === 'done' ? 'line-through' : 'none',
-                      lineHeight:     1.4,
-                      minWidth:       0,
-                      overflowWrap:   'anywhere',
-                    }}>
-                      {sub.title}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* log */}
         {task.log.length > 0 && (
@@ -592,6 +873,7 @@ export default function TasksPage({ params, setParams }) {
   const [dragOverStatus, setDragOverStatus] = useState(null);
   const [renderedSelectedId, setRenderedSelectedId] = useState(params.task ?? null);
   const [panelOpen, setPanelOpen] = useState(Boolean(params.task));
+  const [statusError, setStatusError] = useState(null);
 
   // Persist filter + selection in URL params
   const activeTag  = params.tag    ?? null;
@@ -633,19 +915,66 @@ export default function TasksPage({ params, setParams }) {
   }, [selectedId, renderedSelectedId]);
 
   const handleStatusChange = useCallback(async (id, status) => {
+    setStatusError(null);
+    const previousTask = tasks.find(t => t.id === id);
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
     try {
-      await fetch(`/api/pi-todo/tasks/${id}`, {
+      const response = await fetch(`/api/pi-todo/tasks/${id}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ status }),
       });
-    } catch { fetchTasks(); }
-  }, [fetchTasks]);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const unresolved = payload?.unresolvedDependencies?.map(dep => `#${dep.id}`).join(', ');
+        setStatusError(payload?.error ? `${payload.error}${unresolved ? `: ${unresolved}` : ''}` : 'Status update failed');
+        if (previousTask) {
+          setTasks(prev => prev.map(t => t.id === id ? { ...t, status: previousTask.status } : t));
+        } else {
+          fetchTasks();
+        }
+      }
+    } catch {
+      fetchTasks();
+    }
+  }, [fetchTasks, tasks]);
 
   const handleSelect = useCallback((id) => {
     setParams({ ...params, task: selectedId === id ? null : id });
   }, [params, selectedId, setParams]);
+
+  const handleDependencyChange = useCallback(async (taskId, dependencyId, enabled) => {
+    setStatusError(null);
+    const previousTask = tasks.find(t => t.id === taskId);
+    if (!previousTask) return;
+
+    const nextDependsOnIds = enabled
+      ? [...new Set([...(previousTask.dependsOnIds ?? []), dependencyId])]
+      : (previousTask.dependsOnIds ?? []).filter(id => id !== dependencyId);
+
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, dependsOnIds: nextDependsOnIds } : t));
+
+    try {
+      const response = await fetch(`/api/pi-todo/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dependsOnIds: nextDependsOnIds }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        setStatusError(payload?.error ?? 'Dependency update failed');
+        setTasks(prev => prev.map(t => t.id === taskId ? previousTask : t));
+        return;
+      }
+      const updatedTask = await response.json().catch(() => null);
+      if (updatedTask?.id) {
+        setTasks(prev => prev.map(t => t.id === taskId ? updatedTask : t));
+      }
+    } catch {
+      setTasks(prev => prev.map(t => t.id === taskId ? previousTask : t));
+      setStatusError('Dependency update failed');
+    }
+  }, [tasks]);
 
   const allTags = [...new Set(tasks.flatMap(t => t.tags))].sort();
   const visible = activeTag ? tasks.filter(t => t.tags.includes(activeTag)) : tasks;
@@ -657,6 +986,19 @@ export default function TasksPage({ params, setParams }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+
+      {statusError && (
+        <div style={{
+          padding: '10px 20px',
+          borderBottom: '1px solid color-mix(in srgb, var(--waiting) 35%, transparent)',
+          background: 'color-mix(in srgb, var(--waiting) 10%, transparent)',
+          color: 'var(--fg2)',
+          fontSize: '12px',
+          fontFamily: 'var(--font-mono)',
+        }}>
+          {statusError}
+        </div>
+      )}
 
       {/* filter bar */}
       <div style={{
@@ -743,6 +1085,7 @@ export default function TasksPage({ params, setParams }) {
               taskId={renderedSelectedId}
               allTasks={tasks}
               onStatusChange={handleStatusChange}
+              onDependencyChange={handleDependencyChange}
               onClose={() => setSelectedId(null)}
               isOpen={panelOpen}
             />
