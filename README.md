@@ -7,7 +7,7 @@ Tasks are stored in a single JSON file. Supports parent/child relationships, dep
 ## Install
 
 ```bash
-git clone https://github.com/ArekKuba/pi-todo.git
+git clone https://github.com/JakubSzwajka/pi-todo.git
 cd pi-todo
 npm install
 ```
@@ -66,7 +66,7 @@ The `pitodo` tool exposes the same actions: `add`, `list`, `get`, `status`, `log
 
 ## UI
 
-For a kanban board UI, install [pi-todo-monitor](https://github.com/ArekKuba/pi-todo-monitor) — a [pi-monitor](https://github.com/ArekKuba/pi-monitor) plugin that gives you a drag-and-drop board, tag filtering, dependency editing, and task detail panels.
+For a kanban board UI, install the monitor plugin from this repo's `monitor-plugin/` directory with [pi-monitor](https://github.com/JakubSzwajka/pi-monitor). It gives you a kanban board, tag filtering, dependency editing, and task detail panels.
 
 ## License
 
