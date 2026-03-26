@@ -1,5 +1,4 @@
 export type Status = 'open' | 'in_progress' | 'review' | 'testing' | 'waiting' | 'done' | 'cancelled';
-export type Priority = 1 | 2 | 3;
 export type Author = 'kuba' | 'pi';
 
 export interface LogEntry {
@@ -14,7 +13,6 @@ export interface Task {
   description?: string;   // body / PRD content, set once, editable
   parentId?: string;       // loose reference to a parent task id
   tags: string[];          // project / context labels e.g. snapcap, highfive
-  priority: Priority;
   status: Status;
   createdAt: string;
   updatedAt: string;

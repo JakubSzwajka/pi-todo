@@ -1,5 +1,5 @@
 import { readStore, writeStore, generateId, findTask } from './store.js';
-import type { Status, Priority, Author, Task } from './types.js';
+import type { Status, Author, Task } from './types.js';
 
 // ─── ANSI helpers ────────────────────────────────────────────────────────────
 
@@ -36,12 +36,6 @@ const STATUS_LABEL: Record<Status, string> = {
   cancelled:   '✕ cancelled',
 };
 
-const PRIORITY_LABEL: Record<number, string> = {
-  1: `${c.gray}p1${c.reset}`,
-  2: `${c.yellow}p2${c.reset}`,
-  3: `${c.red}p3${c.reset}`,
-};
-
 function fmtStatus(s: Status) {
   return `${STATUS_COLOR[s]}${STATUS_LABEL[s]}${c.reset}`;
 }
@@ -64,7 +58,7 @@ function fmtTask(t: Task, showFull = false, allTasks: Task[] = []) {
   const tags = fmtTags(t.tags);
   lines.push(
     `${c.bold}${c.dim}#${t.id}${c.reset}  ${c.bold}${t.title}${c.reset}` +
-    `  ${PRIORITY_LABEL[t.priority]}  ${fmtStatus(t.status)}` +
+    `  ${fmtStatus(t.status)}` +
     (tags ? `  ${tags}` : '') +
     `  ${c.gray}${fmtDate(t.createdAt)}${c.reset}`
   );
@@ -109,20 +103,17 @@ function fmtTask(t: Task, showFull = false, allTasks: Task[] = []) {
 export function cmdAdd(title: string, opts: {
   description?: string;
   note?: string;
-  priority?: number;
   parentId?: string;
   tags?: string[];
 }) {
   const store = readStore();
   const now = new Date().toISOString();
-  const priority = (opts.priority ?? 1) as Priority;
   const task: Task = {
     id: generateId(),
     title,
     description: opts.description,
     parentId: opts.parentId,
     tags: opts.tags ?? [],
-    priority,
     status: 'open',
     createdAt: now,
     updatedAt: now,
@@ -191,7 +182,6 @@ export function cmdStatus(id: string, status: string) {
 export function cmdUpdate(id: string, opts: {
   title?: string;
   description?: string;
-  priority?: number;
   parentId?: string;
   tags?: string[];
 }) {
@@ -203,7 +193,6 @@ export function cmdUpdate(id: string, opts: {
   }
   if (opts.title !== undefined)       task.title = opts.title;
   if (opts.description !== undefined) task.description = opts.description;
-  if (opts.priority !== undefined)    task.priority = opts.priority as Priority;
   if (opts.parentId !== undefined)    task.parentId = opts.parentId;
   if (opts.tags !== undefined)        task.tags = opts.tags;
   task.updatedAt = new Date().toISOString();

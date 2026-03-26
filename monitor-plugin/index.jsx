@@ -14,25 +14,22 @@ const STATUS_META = {
   cancelled:   { label: '✕ cancelled',   color: 'var(--fg3)' },
 };
 
-const PRIORITY_META = {
-  1: { label: 'p1', color: 'var(--fg3)' },
-  2: { label: 'p2', color: 'var(--busy)' },
-  3: { label: 'p3', color: 'hsl(0,80%,65%)' },
-};
-
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 function chip(color, extra) {
   return {
-    fontFamily:  'var(--font-mono)',
-    fontSize:    '11px',
-    lineHeight:  1,
+    fontFamily:   'var(--font-mono)',
+    fontSize:     '11px',
+    lineHeight:   1,
     color,
-    background:  `color-mix(in srgb, ${color} 14%, transparent)`,
-    border:      `1px solid color-mix(in srgb, ${color} 28%, transparent)`,
-    padding:     '2px 7px',
+    background:   `color-mix(in srgb, ${color} 14%, transparent)`,
+    border:       `1px solid color-mix(in srgb, ${color} 28%, transparent)`,
+    padding:      '2px 7px',
     borderRadius: '4px',
-    whiteSpace:  'nowrap',
+    whiteSpace:   'nowrap',
+    maxWidth:     '100%',
+    overflow:     'hidden',
+    textOverflow: 'ellipsis',
     ...extra,
   };
 }
@@ -145,6 +142,8 @@ function SubtaskRow({ task, onStatusChange, onSelect }) {
           lineHeight:     1.4,
           textDecoration: task.status === 'done' ? 'line-through' : 'none',
           cursor:         'pointer',
+          minWidth:       0,
+          overflowWrap:   'anywhere',
         }}
         onMouseEnter={e => e.target.style.color = 'var(--accent)'}
         onMouseLeave={e => e.target.style.color = task.status === 'done' ? 'var(--fg3)' : 'var(--fg2)'}
@@ -161,7 +160,6 @@ function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected, draggi
   const [expanded, setExpanded] = useState(false);
   const subtasks  = allTasks.filter(t => t.parentId === task.id);
   const doneCount = subtasks.filter(t => t.status === 'done').length;
-  const pm = PRIORITY_META[task.priority];
   const isDragging = draggingId === task.id;
 
   return (
@@ -185,11 +183,13 @@ function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected, draggi
       <div
         onClick={() => onSelect(task.id)}
         style={{
-          fontSize:   '13px',
-          fontWeight: 500,
-          color:      isSelected ? 'var(--accent)' : 'var(--fg)',
-          lineHeight: 1.35,
-          cursor:     'pointer',
+          fontSize:     '13px',
+          fontWeight:   500,
+          color:        isSelected ? 'var(--accent)' : 'var(--fg)',
+          lineHeight:   1.35,
+          cursor:       'pointer',
+          minWidth:     0,
+          overflowWrap: 'anywhere',
         }}
         onMouseEnter={e => { if (!isSelected) e.currentTarget.style.color = 'var(--accent)'; }}
         onMouseLeave={e => { if (!isSelected) e.currentTarget.style.color = 'var(--fg)'; }}
@@ -198,10 +198,9 @@ function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected, draggi
       </div>
 
       {/* chips */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' }}>
-        <span style={chip(pm.color)}>{pm.label}</span>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', minWidth: 0 }}>
         {task.tags.map(tag => (
-          <span key={tag} style={chip('var(--accent)')}>#{tag}</span>
+          <span key={tag} style={chip('var(--accent)', { maxWidth: '100%' })}>#{tag}</span>
         ))}
         {task.log.length > 0 && (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--fg3)' }}>
@@ -211,7 +210,7 @@ function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected, draggi
       </div>
 
       {/* status + subtask toggle */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
         <StatusChip taskId={task.id} status={task.status} onStatusChange={onStatusChange} />
         {subtasks.length > 0 && (
           <button onClick={() => setExpanded(v => !v)} style={{
@@ -223,11 +222,12 @@ function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected, draggi
             border:       '1px solid var(--border)',
             background:   'transparent',
             color:        doneCount === subtasks.length ? 'var(--idle)' : 'var(--fg3)',
+            maxWidth:     '100%',
           }}>
             {expanded ? '▴' : '▾'} {doneCount}/{subtasks.length} subtasks
           </button>
         )}
-        <div style={{ flex: 1 }} />
+        <div style={{ flex: 1, minWidth: 0 }} />
         <CopyButton text={`task #${task.id}`} />
       </div>
 
@@ -333,7 +333,7 @@ function Description({ text }) {
           </div>;
         if (line === '')
           return <div key={i} style={{ height: 4 }} />;
-        return <div key={i} style={{ fontSize: '12px', color: 'var(--fg2)', lineHeight: 1.5 }}>{line}</div>;
+        return <div key={i} style={{ fontSize: '12px', color: 'var(--fg2)', lineHeight: 1.5, overflowWrap: 'anywhere' }}>{line}</div>;
       })}
     </div>
   );
@@ -370,7 +370,7 @@ function CopyButton({ text }) {
 
 // ── DetailPanel ───────────────────────────────────────────────────────────────
 
-function DetailPanel({ taskId, allTasks, onStatusChange, onClose }) {
+function DetailPanel({ taskId, allTasks, onStatusChange, onClose, isOpen }) {
   const [history, setHistory] = useState([taskId]);
   const currentId = history[history.length - 1];
   const task = allTasks.find(t => t.id === currentId);
@@ -392,8 +392,6 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose }) {
 
   const parent   = task.parentId ? allTasks.find(t => t.id === task.parentId) : null;
   const subtasks = allTasks.filter(t => t.parentId === task.id);
-  const sm = STATUS_META[task.status];
-  const pm = PRIORITY_META[task.priority];
 
   const sectionLabel = {
     fontFamily:    'var(--font-mono)',
@@ -412,13 +410,19 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose }) {
 
   return (
     <div style={{
-      width:         760,
+      width:         '100%',
+      height:        '100%',
+      maxWidth:      '100%',
+      minWidth:      0,
       flexShrink:    0,
       borderLeft:    '1px solid var(--border)',
       display:       'flex',
       flexDirection: 'column',
       overflow:      'hidden',
       background:    'var(--bg2)',
+      opacity:       isOpen ? 1 : 0,
+      transform:     isOpen ? 'translateX(0)' : 'translateX(16px)',
+      transition:    'opacity 180ms ease, transform 180ms ease',
     }}>
       {/* header */}
       <div style={{
@@ -428,6 +432,8 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose }) {
         padding:      '10px 14px',
         borderBottom: '1px solid var(--border)',
         flexShrink:   0,
+        flexWrap:     'wrap',
+        minWidth:     0,
       }}>
         {history.length > 1 && (
           <button onClick={goBack} style={{
@@ -449,18 +455,17 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose }) {
       </div>
 
       {/* scrollable body */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '14px', display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
 
         {/* title */}
-        <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--fg)', lineHeight: 1.4 }}>
+        <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--fg)', lineHeight: 1.4, overflowWrap: 'anywhere' }}>
           {task.title}
         </div>
 
         {/* meta chips */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
           <StatusChip taskId={task.id} status={task.status} onStatusChange={onStatusChange} />
-          <span style={chip(pm.color)}>{pm.label}</span>
-          {task.tags.map(tag => <span key={tag} style={chip('var(--accent)')}>#{tag}</span>)}
+          {task.tags.map(tag => <span key={tag} style={chip('var(--accent)', { maxWidth: '100%' })}>#{tag}</span>)}
         </div>
 
         {/* parent link */}
@@ -476,7 +481,8 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose }) {
               onMouseEnter={e => e.currentTarget.style.color = 'var(--accent)'}
               onMouseLeave={e => e.currentTarget.style.color = 'var(--fg2)'}
             >
-              <span style={{ color: 'var(--fg3)' }}>↑</span> {parent.title}
+              <span style={{ color: 'var(--fg3)', flexShrink: 0 }}>↑</span>
+              <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{parent.title}</span>
             </div>
           </div>
         )}
@@ -523,6 +529,8 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose }) {
                       color:          sub.status === 'done' ? 'var(--fg3)' : 'var(--fg)',
                       textDecoration: sub.status === 'done' ? 'line-through' : 'none',
                       lineHeight:     1.4,
+                      minWidth:       0,
+                      overflowWrap:   'anywhere',
                     }}>
                       {sub.title}
                     </span>
@@ -551,7 +559,7 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onClose }) {
                       {fmtDate(entry.at)}
                     </span>
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--fg2)', lineHeight: 1.5 }}>
+                  <div style={{ fontSize: '12px', color: 'var(--fg2)', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
                     {entry.text}
                   </div>
                 </div>
@@ -582,6 +590,8 @@ export default function TasksPage({ params, setParams }) {
   const [loading, setLoading]       = useState(true);
   const [draggingId, setDraggingId] = useState(null);
   const [dragOverStatus, setDragOverStatus] = useState(null);
+  const [renderedSelectedId, setRenderedSelectedId] = useState(params.task ?? null);
+  const [panelOpen, setPanelOpen] = useState(Boolean(params.task));
 
   // Persist filter + selection in URL params
   const activeTag  = params.tag    ?? null;
@@ -604,6 +614,23 @@ export default function TasksPage({ params, setParams }) {
     const id = setInterval(fetchTasks, 5000);
     return () => clearInterval(id);
   }, [fetchTasks]);
+
+  useEffect(() => {
+    if (selectedId) {
+      setRenderedSelectedId(selectedId);
+      const raf = requestAnimationFrame(() => setPanelOpen(true));
+      return () => cancelAnimationFrame(raf);
+    }
+
+    if (!renderedSelectedId) {
+      setPanelOpen(false);
+      return;
+    }
+
+    setPanelOpen(false);
+    const timeout = setTimeout(() => setRenderedSelectedId(null), 180);
+    return () => clearTimeout(timeout);
+  }, [selectedId, renderedSelectedId]);
 
   const handleStatusChange = useCallback(async (id, status) => {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
@@ -661,18 +688,21 @@ export default function TasksPage({ params, setParams }) {
       </div>
 
       {/* board + panel */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: 0 }}>
 
         {/* board */}
         <div style={{
           flex:                1,
+          minWidth:            0,
           display:             'grid',
-          gridTemplateColumns: `repeat(${columns.length}, 1fr)`,
+          gridTemplateColumns: `repeat(${columns.length}, minmax(280px, 1fr))`,
           gridAutoRows:        '1fr',
           gap:                 16,
           padding:             '16px 20px',
+          overflowX:           'auto',
           overflowY:           'auto',
           alignItems:          'stretch',
+          alignContent:        'start',
         }}>
           {columns.map(status => (
             <Column
@@ -700,13 +730,23 @@ export default function TasksPage({ params, setParams }) {
         </div>
 
         {/* detail panel */}
-        {selectedId && (
-          <DetailPanel
-            taskId={selectedId}
-            allTasks={tasks}
-            onStatusChange={handleStatusChange}
-            onClose={() => setSelectedId(null)}
-          />
+        {renderedSelectedId && (
+          <div style={{
+            width:      panelOpen ? 'clamp(320px, 38vw, 760px)' : 0,
+            maxWidth:   '100%',
+            minWidth:   0,
+            overflow:   'hidden',
+            flexShrink: 0,
+            transition: 'width 180ms ease',
+          }}>
+            <DetailPanel
+              taskId={renderedSelectedId}
+              allTasks={tasks}
+              onStatusChange={handleStatusChange}
+              onClose={() => setSelectedId(null)}
+              isOpen={panelOpen}
+            />
+          </div>
         )}
       </div>
     </div>

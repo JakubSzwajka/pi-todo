@@ -17,7 +17,6 @@ function task(fields: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>): Task {
 const hf1 = task({
   title: '[HighFive] refactor synt batch composer',
   tags: ['highfive'],
-  priority: 3,
   status: 'in_progress',
   parentId: undefined,
   description: `Branch: feat/refactor-synt-batch-composer
@@ -58,7 +57,6 @@ Root cause: external MLflow/auth access issue — endpoints return 403 Forbidden
 const sc1 = task({
   title: '[SnapCap] automatic certification verification',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: undefined,
   description: `Branch: TBD
@@ -93,7 +91,6 @@ Relevant files: snapcap/api/routes/private/admin/capabilities.py and captioner c
 const sc1a = task({
   title: '[SnapCap] confirm existing certification verification service and current gaps',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc1.id,
   description: undefined,
@@ -103,7 +100,6 @@ const sc1a = task({
 const sc1b = task({
   title: '[SnapCap] wire manual admin trigger for certification verification',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc1.id,
   description: undefined,
@@ -113,7 +109,6 @@ const sc1b = task({
 const sc1c = task({
   title: '[SnapCap] return verification results cleanly and add coverage',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc1.id,
   description: undefined,
@@ -125,7 +120,6 @@ const sc1c = task({
 const sc2 = task({
   title: '[SnapCap] expose referral code validation errors',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: undefined,
   description: `Branch: TBD
@@ -162,7 +156,6 @@ Relevant files: snapcap/api/routes/private/referral.py, snapcap/modules/domain/r
 const sc2a = task({
   title: '[SnapCap] map current referral validation and apply-code failure paths',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc2.id,
   description: undefined,
@@ -172,7 +165,6 @@ const sc2a = task({
 const sc2b = task({
   title: '[SnapCap] expose structured referral validation errors from the referral endpoint',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc2.id,
   description: undefined,
@@ -182,7 +174,6 @@ const sc2b = task({
 const sc2c = task({
   title: '[SnapCap] expose referral failure reasons during role setup and add coverage',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc2.id,
   description: undefined,
@@ -194,7 +185,6 @@ const sc2c = task({
 const sc3 = task({
   title: '[SnapCap] booking document size setting via feature flags',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: undefined,
   description: `Branch: TBD
@@ -229,7 +219,6 @@ Allow admins to change the booking document size limit via the existing feature 
 const sc3a = task({
   title: '[SnapCap] add booking document size to resolved request config',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc3.id,
   description: undefined,
@@ -239,7 +228,6 @@ const sc3a = task({
 const sc3b = task({
   title: '[SnapCap] use resolved limit in booking document validation',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc3.id,
   description: undefined,
@@ -249,7 +237,6 @@ const sc3b = task({
 const sc3c = task({
   title: '[SnapCap] expose the effective limit in metadata and cover it with flow tests',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc3.id,
   description: undefined,
@@ -261,7 +248,6 @@ const sc3c = task({
 const sc4 = task({
   title: '[SnapCap] Unify event publishing — single EventPublisher.record() API',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: undefined,
   description: `Branch: TBD
@@ -301,7 +287,6 @@ The lazy='selectin' problem disappears entirely when the ORM relationship is rem
 const sc4a = task({
   title: 'Build EventPublisher.record() unified API',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc4.id,
   description: `Create snapcap/tools/events/event_publisher.py with single record() method. Requires active transaction (raise if none). Accepts entity= object or explicit entity_id/entity_type. Captures author_id from context. Registers inbox handlers. No ORM relationship — direct db.add().`,
@@ -311,7 +296,6 @@ const sc4a = task({
 const sc4b = task({
   title: 'Migrate entity.publish() call sites to EventPublisher.record()',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc4.id,
   description: `Mechanical 1:1 replacement across all modules. ~30 call sites in bookings (model, facade, processes, wrap-up), party, organizations. Replace entity.publish(Event(...)) → EventPublisher.record(Event(...), entity=entity).`,
@@ -321,7 +305,6 @@ const sc4b = task({
 const sc4c = task({
   title: 'Remove EventPublishableMixin and EventDispatcher.publish()',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc4.id,
   description: `Delete publish() method and domain_events relationship from EventPublishableMixin. Remove mixin from all model class hierarchies. Delete EventDispatcher.publish() method (keep subscribe/get_handlers). Optionally rename EventDispatcher → EventHandlerRegistry for clarity.`,
@@ -331,7 +314,6 @@ const sc4c = task({
 const sc4d = task({
   title: 'Migrate EventDispatcher.publish() call sites to EventPublisher.record()',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc4.id,
   description: `~6 call sites: availability, google_calendar, analytics, payments, admin routes. Replace await EventDispatcher.publish(Event(...)) → await EventPublisher.record(Event(...), entity_id=..., entity_type=...). Fix the random entity_id problem by passing real IDs where applicable.`,
@@ -341,7 +323,6 @@ const sc4d = task({
 const sc4e = task({
   title: 'Remove dead _event_record and @event decorator',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc4.id,
   description: `Remove _event_record from Entity base class in shared/root.py. Remove @event decorator from tools/events/events.py. Migrate any _event_record usage in CaSchedulerSync to EventPublisher.record().`,
@@ -351,7 +332,6 @@ const sc4e = task({
 const sc4f = task({
   title: 'Update tests — replace entity.domain_events reads with outbox queries',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc4.id,
   description: `Tests that assert booking.domain_events or len(entity.domain_events) must switch to querying DomainEventOutboxModel directly by entity_id. This is the main testing impact of removing the ORM relationship.`,
@@ -361,7 +341,6 @@ const sc4f = task({
 const sc4g = task({
   title: 'Document event publishing decision rule',
   tags: ['snapcap'],
-  priority: 1,
   status: 'open',
   parentId: sc4.id,
   description: `Add to AGENTS.md or a new docs/events.md: one API (EventPublisher.record()), authority convention (entity method vs process vs system), the refined rule ("publish from entity only when every invocation implies the same business fact").`,

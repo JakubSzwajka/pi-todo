@@ -4,14 +4,36 @@ import { join } from 'node:path';
 
 const STORE_PATH = join(homedir(), '.pi', '.pi-todo.json');
 
+function sanitizeTask(task) {
+  return {
+    id: task.id,
+    title: task.title,
+    description: typeof task.description === 'string' ? task.description : undefined,
+    parentId: typeof task.parentId === 'string' ? task.parentId : undefined,
+    tags: Array.isArray(task.tags) ? task.tags.filter(tag => typeof tag === 'string') : [],
+    status: task.status,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+    log: Array.isArray(task.log)
+      ? task.log.filter(entry => entry && typeof entry.at === 'string' && typeof entry.text === 'string' && (entry.author === 'kuba' || entry.author === 'pi'))
+      : [],
+  };
+}
+
+function sanitizeStore(store) {
+  return {
+    tasks: Array.isArray(store?.tasks) ? store.tasks.filter(Boolean).map(sanitizeTask) : [],
+  };
+}
+
 function readStore() {
   if (!existsSync(STORE_PATH)) return { tasks: [] };
-  try { return JSON.parse(readFileSync(STORE_PATH, 'utf8')); }
+  try { return sanitizeStore(JSON.parse(readFileSync(STORE_PATH, 'utf8'))); }
   catch { return { tasks: [] }; }
 }
 
 function writeStore(store) {
-  writeFileSync(STORE_PATH, JSON.stringify(store, null, 2), 'utf8');
+  writeFileSync(STORE_PATH, JSON.stringify(sanitizeStore(store), null, 2), 'utf8');
 }
 
 export default async function routes(req, res, url, { sendJson, readBody }) {

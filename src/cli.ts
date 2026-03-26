@@ -34,18 +34,17 @@ const HELP = `
 Usage: todo <command> [options]
 
 Commands:
-  add <title> [--priority 1-3] [--description <text>]
+  add <title> [--description <text>]
               [--parent <id>] [--tags <tag1,tag2>] [--note <text>]
   list [--status <status>] [--tag <tag>] [--all]
   show <id>
   status <id> <status>
-  update <id> [--title <text>] [--priority 1-3] [--description <text>]
+  update <id> [--title <text>] [--description <text>]
               [--parent <id>] [--tags <tag1,tag2>]
   log <id> <note text>
   delete <id>
 
-Statuses:   open | in_progress | review | testing | waiting | done | cancelled
-Priorities: 1 (low) | 2 (medium) | 3 (high)
+Statuses: open | in_progress | review | testing | waiting | done | cancelled
 `;
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -60,7 +59,6 @@ switch (cmd) {
     cmdAdd(title, {
       description: flags['description'] as string | undefined,
       note:        flags['note']        as string | undefined,
-      priority:    flags['priority']    ? parseInt(flags['priority'] as string) : undefined,
       parentId:    flags['parent']      as string | undefined,
       tags:        flags['tags']        ? parseTags(flags['tags'] as string) : undefined,
     });
@@ -89,7 +87,6 @@ switch (cmd) {
     cmdUpdate(rest[0], {
       title:       flags['title']       as string | undefined,
       description: flags['description'] as string | undefined,
-      priority:    flags['priority']    ? parseInt(flags['priority'] as string) : undefined,
       parentId:    flags['parent']      as string | undefined,
       tags:        flags['tags']        ? parseTags(flags['tags'] as string) : undefined,
     });

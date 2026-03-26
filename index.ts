@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 import { Type } from '@sinclair/typebox';
 import { readStore, writeStore, generateId, findTask } from './src/store.js';
-import type { Status, Priority, Author, Task } from './src/types.js';
+import type { Status, Author, Task } from './src/types.js';
 
 const StatusEnum = () => Type.Union([
   Type.Literal('open'),
@@ -52,7 +52,6 @@ export default function (pi: ExtensionAPI) {
       description: Type.Optional(Type.String({ description: 'Task body / PRD content' })),
       parentId:    Type.Optional(Type.String({ description: 'Parent task ID for subtasks' })),
       tags:        Type.Optional(Type.Array(Type.String(), { description: 'Project/context labels e.g. ["snapcap", "highfive"]' })),
-      priority:    Type.Optional(Type.Number({ minimum: 1, maximum: 3, description: '1=low 2=medium 3=high' })),
 
       // log
       text:   Type.Optional(Type.String({ description: 'Note text to append to the task log' })),
@@ -105,7 +104,6 @@ export default function (pi: ExtensionAPI) {
           description: params.description,
           parentId: params.parentId,
           tags: params.tags ?? [],
-          priority: (params.priority ?? 1) as Priority,
           status: 'open',
           createdAt: at,
           updatedAt: at,
@@ -158,7 +156,6 @@ export default function (pi: ExtensionAPI) {
         if (!task) throw new Error(`Task not found: ${params.id}`);
         if (params.title       !== undefined) task.title       = params.title;
         if (params.description !== undefined) task.description = params.description;
-        if (params.priority    !== undefined) task.priority    = params.priority as Priority;
         if (params.parentId    !== undefined) task.parentId    = params.parentId;
         if (params.tags        !== undefined) task.tags        = params.tags;
         task.updatedAt = now();
