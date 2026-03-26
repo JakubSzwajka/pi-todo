@@ -66,7 +66,9 @@ The `pitodo` tool exposes the same actions: `add`, `list`, `get`, `status`, `log
 
 ## UI
 
-For a kanban board UI, install the monitor plugin from this repo's `monitor-plugin/` directory with [pi-monitor](https://github.com/JakubSzwajka/pi-monitor). It gives you a kanban board, tag filtering, dependency editing, and task detail panels.
+This extension ships with a `monitor-plugin/` directory — a [pi-monitor](https://github.com/JakubSzwajka/pi-monitor) plugin that adds a kanban board, tag filtering, dependency editing, and task detail panels.
+
+If you have pi-monitor installed, it picks up the plugin automatically from the extension's `monitor-plugin/` directory. No extra setup needed.
 
 ## License
 
