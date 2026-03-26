@@ -147,7 +147,7 @@ export function cmdAdd(title: string, opts: {
     description: opts.description,
     parentId: opts.parentId,
     dependsOnIds: [...new Set(opts.dependsOnIds ?? [])],
-    tags: opts.tags ?? [],
+    tags: opts.parentId ? [] : (opts.tags ?? []),
     status: 'open',
     createdAt: now,
     updatedAt: now,
@@ -175,7 +175,10 @@ export function cmdList(opts: { status?: string; all?: boolean; tag?: string }) 
   }
 
   if (opts.tag) {
-    tasks = tasks.filter(t => t.tags.includes(opts.tag!));
+    const parentIds = new Set(
+      tasks.filter(t => !t.parentId && t.tags.includes(opts.tag!)).map(t => t.id)
+    );
+    tasks = tasks.filter(t => t.tags.includes(opts.tag!) || (t.parentId && parentIds.has(t.parentId)));
   }
 
   if (tasks.length === 0) {
@@ -243,7 +246,7 @@ export function cmdUpdate(id: string, opts: {
     description: opts.description ?? task.description,
     parentId: opts.parentId ?? task.parentId,
     dependsOnIds: opts.dependsOnIds ?? task.dependsOnIds ?? [],
-    tags: opts.tags ?? task.tags,
+    tags: task.parentId ? [] : (opts.tags ?? task.tags),
   };
   const dependencyError = validateDependsOnIds(store, nextTask, nextTask.dependsOnIds);
   if (dependencyError) {

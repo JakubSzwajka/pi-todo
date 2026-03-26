@@ -98,6 +98,20 @@ export default async function routes(req, res, url, { sendJson, readBody }) {
       task.dependsOnIds = [...new Set(body.dependsOnIds.map(id => String(id).trim()).filter(Boolean))];
       task.updatedAt = new Date().toISOString();
     }
+    if (body.addTag && typeof body.addTag === 'string') {
+      if (task.parentId) { sendJson(res, 400, { error: 'Child tasks inherit tags from parent' }); return true; }
+      const tag = body.addTag.trim();
+      if (tag && !task.tags.includes(tag)) {
+        task.tags.push(tag);
+        task.updatedAt = new Date().toISOString();
+      }
+    }
+    if (body.removeTag && typeof body.removeTag === 'string') {
+      if (task.parentId) { sendJson(res, 400, { error: 'Child tasks inherit tags from parent' }); return true; }
+      const tag = body.removeTag.trim();
+      task.tags = task.tags.filter(t => t !== tag);
+      task.updatedAt = new Date().toISOString();
+    }
     if (body.status) {
       const unresolved = statusRequiresResolvedDependencies(body.status) ? getUnresolvedDependencies(store, task) : [];
       if (unresolved.length > 0) {

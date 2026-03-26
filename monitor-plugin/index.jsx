@@ -154,6 +154,70 @@ function DependencySelect({ task, candidates, onDependencyChange }) {
   );
 }
 
+// ── TagEditor ─────────────────────────────────────────────────────────────────
+
+function TagEditor({ task, onAddTag, onRemoveTag }) {
+  const [adding, setAdding] = useState(false);
+  const [input, setInput] = useState('');
+
+  const addTag = () => {
+    const tag = input.trim();
+    if (!tag) return;
+    onAddTag(task.id, tag);
+    setInput('');
+    setAdding(false);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', minWidth: 0 }}>
+      {task.tags.map(tag => (
+        <span key={tag} style={{ ...chip('var(--accent)', { maxWidth: '100%' }), display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          #{tag}
+          <span
+            onClick={() => onRemoveTag(task.id, tag)}
+            style={{ cursor: 'pointer', opacity: 0.5, fontSize: '13px', lineHeight: 1 }}
+            onMouseEnter={e => e.target.style.opacity = 1}
+            onMouseLeave={e => e.target.style.opacity = 0.5}
+          >×</span>
+        </span>
+      ))}
+      {adding ? (
+        <input
+          autoFocus
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') addTag();
+            if (e.key === 'Escape') { setAdding(false); setInput(''); }
+          }}
+          onBlur={() => { if (!input.trim()) { setAdding(false); setInput(''); } }}
+          placeholder="tag…"
+          style={{
+            fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--fg)',
+            background: 'var(--surface)', border: '1px solid var(--border2)',
+            borderRadius: '4px', padding: '2px 8px', width: 80, outline: 'none',
+          }}
+          onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+        />
+      ) : (
+        <button
+          onClick={() => setAdding(true)}
+          style={{
+            fontFamily: 'var(--font-mono)', fontSize: '13px', cursor: 'pointer',
+            width: 22, height: 22, borderRadius: '999px',
+            border: '1px dashed var(--border2)', background: 'none',
+            color: 'var(--fg3)', display: 'inline-flex', alignItems: 'center',
+            justifyContent: 'center', lineHeight: 1,
+          }}
+          onMouseEnter={e => { e.target.style.color = 'var(--accent)'; e.target.style.borderColor = 'var(--accent)'; }}
+          onMouseLeave={e => { e.target.style.color = 'var(--fg3)'; e.target.style.borderColor = 'var(--border2)'; }}
+          title="Add tag"
+        >+</button>
+      )}
+    </div>
+  );
+}
+
 // ── StatusPicker ──────────────────────────────────────────────────────────────
 
 function StatusPicker({ current, onSelect }) {
@@ -519,7 +583,7 @@ function CopyButton({ text }) {
 
 // ── DetailPanel ───────────────────────────────────────────────────────────────
 
-function DetailPanel({ taskId, allTasks, onStatusChange, onDependencyChange, onClose, isOpen }) {
+function DetailPanel({ taskId, allTasks, onStatusChange, onDependencyChange, onAddTag, onRemoveTag, onClose, isOpen }) {
   const [history, setHistory] = useState([taskId]);
   const currentId = history[history.length - 1];
   const task = allTasks.find(t => t.id === currentId);
@@ -616,11 +680,22 @@ function DetailPanel({ taskId, allTasks, onStatusChange, onDependencyChange, onC
         </div>
 
         {/* meta chips */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0, alignItems: 'center' }}>
           <StatusChip taskId={task.id} status={task.status} onStatusChange={onStatusChange} />
-          {task.tags.map(tag => <span key={tag} style={chip('var(--accent)', { maxWidth: '100%' })}>#{tag}</span>)}
           {unresolvedDependencies.length > 0 && <span style={chip('var(--waiting)')}>blocked</span>}
         </div>
+
+        {/* tags — only editable on parent tasks; children inherit */}
+        {!task.parentId ? (
+          <TagEditor task={task} onAddTag={onAddTag} onRemoveTag={onRemoveTag} />
+        ) : parent && parent.tags.length > 0 ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' }}>
+            {parent.tags.map(tag => (
+              <span key={tag} style={{ ...chip('var(--accent)', { maxWidth: '100%' }), opacity: 0.6 }}>#{tag}</span>
+            ))}
+            <span style={{ fontSize: 10, color: 'var(--fg3)' }}>inherited</span>
+          </div>
+        ) : null}
 
         {/* parent link */}
         {parent && (
@@ -976,8 +1051,43 @@ export default function TasksPage({ params, setParams }) {
     }
   }, [tasks]);
 
-  const allTags = [...new Set(tasks.flatMap(t => t.tags))].sort();
-  const visible = activeTag ? tasks.filter(t => t.tags.includes(activeTag)) : tasks;
+  const handleAddTag = useCallback(async (id, tag) => {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, tags: [...new Set([...t.tags, tag])] } : t));
+    try {
+      const response = await fetch(`/api/pi-todo/tasks/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addTag: tag }),
+      });
+      if (response.ok) {
+        const updated = await response.json();
+        setTasks(prev => prev.map(t => t.id === id ? updated : t));
+      } else { fetchTasks(); }
+    } catch { fetchTasks(); }
+  }, [fetchTasks]);
+
+  const handleRemoveTag = useCallback(async (id, tag) => {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, tags: t.tags.filter(x => x !== tag) } : t));
+    try {
+      const response = await fetch(`/api/pi-todo/tasks/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ removeTag: tag }),
+      });
+      if (response.ok) {
+        const updated = await response.json();
+        setTasks(prev => prev.map(t => t.id === id ? updated : t));
+      } else { fetchTasks(); }
+    } catch { fetchTasks(); }
+  }, [fetchTasks]);
+
+  const allTags = [...new Set(tasks.filter(t => !t.parentId).flatMap(t => t.tags))].sort();
+  const visible = activeTag
+    ? (() => {
+        const parentIds = new Set(tasks.filter(t => !t.parentId && t.tags.includes(activeTag)).map(t => t.id));
+        return tasks.filter(t => t.tags.includes(activeTag) || (t.parentId && parentIds.has(t.parentId)));
+      })()
+    : tasks;
   const columns = showDone ? COLUMNS : COLUMNS.filter(s => s !== 'done');
 
   if (loading) {
@@ -1086,6 +1196,8 @@ export default function TasksPage({ params, setParams }) {
               allTasks={tasks}
               onStatusChange={handleStatusChange}
               onDependencyChange={handleDependencyChange}
+              onAddTag={handleAddTag}
+              onRemoveTag={handleRemoveTag}
               onClose={() => setSelectedId(null)}
               isOpen={panelOpen}
             />

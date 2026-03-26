@@ -85,7 +85,10 @@ export default function (pi: ExtensionAPI) {
           tasks = tasks.filter(t => t.status === params.filterStatus);
         }
         if (params.filterTag) {
-          tasks = tasks.filter(t => t.tags.includes(params.filterTag!));
+          const parentIds = new Set(
+            tasks.filter(t => !t.parentId && t.tags.includes(params.filterTag!)).map(t => t.id)
+          );
+          tasks = tasks.filter(t => t.tags.includes(params.filterTag!) || (t.parentId && parentIds.has(t.parentId)));
         }
         return {
           content: [{ type: 'text', text: tasks.length === 0 ? 'No tasks.' : JSON.stringify(tasks, null, 2) }],
@@ -116,7 +119,7 @@ export default function (pi: ExtensionAPI) {
           description: params.description,
           parentId: params.parentId,
           dependsOnIds: [...new Set(params.dependsOnIds ?? [])],
-          tags: params.tags ?? [],
+          tags: params.parentId ? [] : (params.tags ?? []),
           status: 'open',
           createdAt: at,
           updatedAt: at,
@@ -180,7 +183,7 @@ export default function (pi: ExtensionAPI) {
           description: params.description ?? task.description,
           parentId: params.parentId ?? task.parentId,
           dependsOnIds: params.dependsOnIds ?? task.dependsOnIds ?? [],
-          tags: params.tags ?? task.tags,
+          tags: task.parentId ? [] : (params.tags ?? task.tags),
         };
         const dependencyError = validateDependsOnIds(store, nextTask, nextTask.dependsOnIds);
         if (dependencyError) throw new Error(dependencyError);
