@@ -21,10 +21,7 @@ const StatusEnum = () => Type.Union([
   Type.Literal('cancelled'),
 ]);
 
-const AuthorEnum = () => Type.Union([
-  Type.Literal('kuba'),
-  Type.Literal('pi'),
-]);
+const AuthorString = () => Type.String({ description: 'Who is logging this note (e.g. your name, "pi", "ci")' });
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
@@ -66,7 +63,7 @@ export default function (pi: ExtensionAPI) {
 
       // log
       text:   Type.Optional(Type.String({ description: 'Note text to append to the task log' })),
-      author: Type.Optional(AuthorEnum()),
+      author: Type.Optional(AuthorString()),
 
       // status
       status: Type.Optional(StatusEnum()),

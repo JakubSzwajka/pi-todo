@@ -1,5 +1,5 @@
 export type Status = 'open' | 'in_progress' | 'review' | 'testing' | 'waiting' | 'done' | 'cancelled';
-export type Author = 'kuba' | 'pi';
+export type Author = string;
 
 export interface LogEntry {
   at: string;

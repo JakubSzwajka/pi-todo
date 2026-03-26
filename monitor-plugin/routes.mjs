@@ -2,7 +2,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 
-const STORE_PATH = join(homedir(), '.pi', '.pi-todo.json');
+const STORE_PATH = process.env.PI_TODO_STORE
+  ?? join(homedir(), '.pi', '.pi-todo.json');
 
 function sanitizeTask(task) {
   return {
@@ -18,7 +19,7 @@ function sanitizeTask(task) {
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     log: Array.isArray(task.log)
-      ? task.log.filter(entry => entry && typeof entry.at === 'string' && typeof entry.text === 'string' && (entry.author === 'kuba' || entry.author === 'pi'))
+      ? task.log.filter(entry => entry && typeof entry.at === 'string' && typeof entry.text === 'string' && typeof entry.author === 'string')
       : [],
   };
 }

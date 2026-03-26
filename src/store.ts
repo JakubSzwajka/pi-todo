@@ -3,13 +3,14 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import type { Store, Task, LogEntry, Author, Status } from './types.js';
 
-export const STORE_PATH = join(homedir(), '.pi', '.pi-todo.json');
+export const STORE_PATH = process.env.PI_TODO_STORE
+  ?? join(homedir(), '.pi', '.pi-todo.json');
 
 function normalizeLogEntry(value: unknown): LogEntry | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
   if (typeof raw.at !== 'string') return null;
-  if (raw.author !== 'kuba' && raw.author !== 'pi') return null;
+  if (typeof raw.author !== 'string') return null;
   if (typeof raw.text !== 'string') return null;
   return {
     at: raw.at,
