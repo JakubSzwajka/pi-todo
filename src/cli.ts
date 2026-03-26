@@ -97,7 +97,7 @@ switch (cmd) {
   case 'log': {
     if (!rest[0] || rest.length < 2) { console.error('Usage: todo log <id> <note text>'); process.exit(1); }
     const [id, ...noteParts] = rest;
-    cmdLog(id, noteParts.join(' '), process.env.PI_TODO_AUTHOR ?? 'user');
+    cmdLog(id, noteParts.join(' '), 'user');
     break;
   }
   case 'delete': {

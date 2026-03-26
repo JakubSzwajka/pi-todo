@@ -111,7 +111,7 @@ function fmtTask(t: Task, showFull = false, allTasks: Task[] = []) {
     if (t.log.length > 0) {
       lines.push('');
       for (const e of t.log) {
-        const who = e.author === 'pi' ? `${c.cyan}pi${c.reset}` : `${c.green}kuba${c.reset}`;
+        const who = e.author === 'lucy' ? `${c.cyan}lucy${c.reset}` : `${c.green}${e.author}${c.reset}`;
         lines.push(`  ${c.gray}${fmtDate(e.at)}${c.reset} ${who}  ${e.text}`);
       }
     }

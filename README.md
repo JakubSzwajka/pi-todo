@@ -63,7 +63,6 @@ The `pitodo` tool exposes the same actions: `add`, `list`, `get`, `status`, `log
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `PI_TODO_STORE` | `~/.pi/.pi-todo.json` | Path to the task store file |
-| `PI_TODO_AUTHOR` | `user` | Default author name for CLI log entries |
 
 ## UI
 

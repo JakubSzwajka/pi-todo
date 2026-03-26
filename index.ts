@@ -120,7 +120,7 @@ export default function (pi: ExtensionAPI) {
           status: 'open',
           createdAt: at,
           updatedAt: at,
-          log: params.text ? [{ at, author: (params.author ?? 'pi') as Author, text: params.text }] : [],
+          log: params.text ? [{ at, author: (params.author ?? 'lucy') as Author, text: params.text }] : [],
         };
         const dependencyError = validateDependsOnIds(store, task, task.dependsOnIds);
         if (dependencyError) throw new Error(dependencyError);
@@ -159,7 +159,7 @@ export default function (pi: ExtensionAPI) {
         if (!params.text) throw new Error('text is required for log');
         const task = findTask(store, params.id);
         if (!task) throw new Error(`Task not found: ${params.id}`);
-        const entry = { at: now(), author: (params.author ?? 'pi') as Author, text: params.text };
+        const entry = { at: now(), author: (params.author ?? 'lucy') as Author, text: params.text };
         task.log.push(entry);
         task.updatedAt = entry.at;
         writeStore(store);
