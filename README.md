@@ -1,6 +1,6 @@
 # lucy // pi-todo
 
-> Flat-file task manager for [pi](https://github.com/mariozechner/pi-coding-agent). Works as a pi extension (tool) and as a standalone CLI.
+> Flat-file task manager for [pi](https://pi.dev/). Works as a pi extension (tool) and as a standalone CLI.
 
 Tasks are stored in a single JSON file. Supports parent/child relationships, dependencies between sibling tasks, tags, status tracking, and log entries.
 
