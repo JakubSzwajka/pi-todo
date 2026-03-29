@@ -92,6 +92,28 @@ function sanitizeTask(task, projects = []) {
 function sanitizeStore(store) {
   const projects = Array.isArray(store?.projects) ? store.projects.map(sanitizeProject).filter(Boolean) : [];
   const tasks = Array.isArray(store?.tasks) ? store.tasks.map(task => sanitizeTask(task, projects)).filter(Boolean) : [];
+  const knownProjectIds = new Set(projects.map(project => project.id));
+  for (const task of tasks) {
+    if (task.projectId && !knownProjectIds.has(task.projectId)) {
+      projects.push({
+        id: task.projectId,
+        name: task.projectId,
+        repos: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      knownProjectIds.add(task.projectId);
+      task.log = [
+        ...task.log,
+        {
+          at: new Date().toISOString(),
+          author: 'system',
+          text: `Unknown project '${task.projectId}' restored as placeholder during normalization.`,
+        },
+      ];
+      task.updatedAt = new Date().toISOString();
+    }
+  }
   return { projects, tasks };
 }
 

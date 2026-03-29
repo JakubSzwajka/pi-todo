@@ -206,12 +206,20 @@ function normalizeStore(value: unknown): Store {
   const knownProjectIds = new Set(projects.map(project => project.id));
   for (const task of tasks) {
     if (task.projectId && !knownProjectIds.has(task.projectId)) {
+      const placeholder: Project = {
+        id: task.projectId,
+        name: task.projectId,
+        repos: [],
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      };
+      projects.push(placeholder);
+      knownProjectIds.add(placeholder.id);
       task.log.push({
         at: nowIso(),
         author: 'system',
-        text: `Unknown project '${task.projectId}' cleared during normalization.`,
+        text: `Unknown project '${task.projectId}' restored as placeholder during normalization.`,
       });
-      task.projectId = undefined;
       task.updatedAt = nowIso();
     }
   }
