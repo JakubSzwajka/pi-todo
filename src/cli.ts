@@ -1,7 +1,19 @@
 #!/usr/bin/env tsx
-import { cmdAdd, cmdList, cmdShow, cmdStatus, cmdUpdate, cmdLog, cmdDelete } from './commands.js';
-
-// ─── Minimal arg parser ───────────────────────────────────────────────────────
+import {
+  cmdAdd,
+  cmdDelete,
+  cmdList,
+  cmdLog,
+  cmdProjectAdd,
+  cmdProjectDelete,
+  cmdProjectList,
+  cmdProjectShow,
+  cmdProjectUpdate,
+  cmdShow,
+  cmdStatus,
+  cmdUpdate,
+} from './commands.js';
+import type { ProjectRepo } from './types.js';
 
 function parseArgs(argv: string[]) {
   const pos: string[] = [];
@@ -28,29 +40,101 @@ function parseCsv(raw: string): string[] {
   return raw.split(',').map(t => t.trim()).filter(Boolean);
 }
 
-// ─── Help ─────────────────────────────────────────────────────────────────────
+function parseRepos(raw: string | undefined): ProjectRepo[] | undefined {
+  if (!raw) return undefined;
+  return raw
+    .split(',')
+    .map(chunk => chunk.trim())
+    .filter(Boolean)
+    .map((entry, index) => {
+      const [kindRaw, labelRaw, targetRaw, primaryRaw] = entry.split('|').map(part => part.trim());
+      const kind = (kindRaw || 'git') as ProjectRepo['kind'];
+      const label = labelRaw || `repo-${index + 1}`;
+      const target = targetRaw || '';
+      return {
+        id: `${label}-${index + 1}`,
+        kind,
+        label,
+        path: kind === 'local' ? target : undefined,
+        url: kind === 'local' ? undefined : target,
+        primary: primaryRaw === 'primary',
+      };
+    });
+}
 
 const HELP = `
 Usage: todo <command> [options]
 
-Commands:
-  add <title> [--description <text>]
-              [--parent <id>] [--depends-on <id1,id2>] [--tags <tag1,tag2>] [--note <text>]
-  list [--status <status>] [--tag <tag>] [--all]
+Task commands:
+  add <title> [--description <text>] [--project <project-id>]
+              [--parent <id>] [--depends-on <id1,id2>] [--note <text>]
+  list [--status <status>] [--project <project-id>] [--all]
   show <id>
   status <id> <status>
   update <id> [--title <text>] [--description <text>]
-              [--parent <id>] [--depends-on <id1,id2>] [--tags <tag1,tag2>]
+              [--project <project-id>] [--parent <id>] [--depends-on <id1,id2>]
   log <id> <note text>
   delete <id>
+
+Project commands:
+  project list
+  project add <name> [--id <project-id>] [--description <text>] [--repos <kind|label|target|primary,...>]
+  project show <id>
+  project update <id> [--name <text>] [--next-id <project-id>] [--description <text>] [--repos <...>]
+  project delete <id>
+
+Repo encoding examples:
+  --repos "local|workspace|/Users/kuba/DEV/priv/pi-todo|primary,github|origin|https://github.com/acme/pi-todo"
 
 Statuses: open | in_progress | review | testing | waiting | done | cancelled
 `;
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
-
 const { pos, flags } = parseArgs(process.argv.slice(2));
 const [cmd, ...rest] = pos;
+
+if (cmd === 'project') {
+  const [subcmd, ...projectRest] = rest;
+  switch (subcmd) {
+    case 'list':
+      cmdProjectList();
+      break;
+    case 'add': {
+      const name = projectRest.join(' ') || (flags['name'] as string);
+      if (!name) { console.error('Usage: todo project add <name>'); process.exit(1); }
+      cmdProjectAdd({
+        id: flags['id'] as string | undefined,
+        name,
+        description: flags['description'] as string | undefined,
+        repos: parseRepos(flags['repos'] as string | undefined),
+      });
+      break;
+    }
+    case 'show': {
+      if (!projectRest[0]) { console.error('Usage: todo project show <id>'); process.exit(1); }
+      cmdProjectShow(projectRest[0]);
+      break;
+    }
+    case 'update': {
+      if (!projectRest[0]) { console.error('Usage: todo project update <id> [options]'); process.exit(1); }
+      cmdProjectUpdate(projectRest[0], {
+        name: flags['name'] as string | undefined,
+        nextId: flags['next-id'] as string | undefined,
+        description: flags['description'] as string | undefined,
+        repos: parseRepos(flags['repos'] as string | undefined),
+      });
+      break;
+    }
+    case 'delete': {
+      if (!projectRest[0]) { console.error('Usage: todo project delete <id>'); process.exit(1); }
+      cmdProjectDelete(projectRest[0]);
+      break;
+    }
+    default:
+      console.log(HELP);
+      process.exit(subcmd ? 1 : 0);
+  }
+  process.exit(0);
+}
 
 switch (cmd) {
   case 'add': {
@@ -58,18 +142,18 @@ switch (cmd) {
     if (!title) { console.error('Usage: todo add <title>'); process.exit(1); }
     cmdAdd(title, {
       description: flags['description'] as string | undefined,
-      note:        flags['note']        as string | undefined,
-      parentId:    flags['parent']      as string | undefined,
+      note: flags['note'] as string | undefined,
+      parentId: flags['parent'] as string | undefined,
       dependsOnIds: flags['depends-on'] ? parseCsv(flags['depends-on'] as string) : undefined,
-      tags:        flags['tags']        ? parseCsv(flags['tags'] as string) : undefined,
+      projectId: flags['project'] as string | undefined,
     });
     break;
   }
   case 'list': {
     cmdList({
       status: flags['status'] as string | undefined,
-      tag:    flags['tag']    as string | undefined,
-      all:    flags['all'] === true,
+      projectId: flags['project'] as string | undefined,
+      all: flags['all'] === true,
     });
     break;
   }
@@ -86,11 +170,11 @@ switch (cmd) {
   case 'update': {
     if (!rest[0]) { console.error('Usage: todo update <id> [options]'); process.exit(1); }
     cmdUpdate(rest[0], {
-      title:       flags['title']       as string | undefined,
+      title: flags['title'] as string | undefined,
       description: flags['description'] as string | undefined,
-      parentId:    flags['parent']      as string | undefined,
+      parentId: flags['parent'] as string | undefined,
       dependsOnIds: flags['depends-on'] ? parseCsv(flags['depends-on'] as string) : undefined,
-      tags:        flags['tags']        ? parseCsv(flags['tags'] as string) : undefined,
+      projectId: flags['project'] as string | undefined,
     });
     break;
   }
@@ -105,8 +189,7 @@ switch (cmd) {
     cmdDelete(rest[0]);
     break;
   }
-  default: {
+  default:
     console.log(HELP);
     if (cmd) process.exit(1);
-  }
 }

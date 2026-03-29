@@ -1,35 +1,28 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-
-// ── constants ─────────────────────────────────────────────────────────────────
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 const COLUMNS = ['open', 'in_progress', 'review', 'testing', 'waiting', 'done'];
 
 const STATUS_META = {
-  open:        { label: '○ open',        color: 'var(--fg2)' },
+  open:        { label: '○ open', color: 'var(--fg2)' },
   in_progress: { label: '◑ in progress', color: 'var(--busy)' },
-  review:      { label: '◉ review',      color: 'var(--waiting)' },
-  testing:     { label: '⬡ testing',     color: 'hsl(280,60%,65%)' },
-  waiting:     { label: '◌ waiting',     color: 'hsl(25,80%,60%)' },
-  done:        { label: '● done',        color: 'var(--idle)' },
-  cancelled:   { label: '✕ cancelled',   color: 'var(--fg3)' },
+  review:      { label: '◉ review', color: 'var(--waiting)' },
+  testing:     { label: '⬡ testing', color: 'hsl(280,60%,65%)' },
+  waiting:     { label: '◌ waiting', color: 'hsl(25,80%,60%)' },
+  done:        { label: '● done', color: 'var(--idle)' },
+  cancelled:   { label: '✕ cancelled', color: 'var(--fg3)' },
 };
-
-// ── helpers ───────────────────────────────────────────────────────────────────
 
 function chip(color, extra) {
   return {
-    fontFamily:   'var(--font-mono)',
-    fontSize:     '11px',
-    lineHeight:   1,
+    fontFamily: 'var(--font-mono)',
+    fontSize: 11,
+    lineHeight: 1,
     color,
-    background:   `color-mix(in srgb, ${color} 14%, transparent)`,
-    border:       `1px solid color-mix(in srgb, ${color} 28%, transparent)`,
-    padding:      '2px 7px',
-    borderRadius: '4px',
-    whiteSpace:   'nowrap',
-    maxWidth:     '100%',
-    overflow:     'hidden',
-    textOverflow: 'ellipsis',
+    background: `color-mix(in srgb, ${color} 14%, transparent)`,
+    border: `1px solid color-mix(in srgb, ${color} 28%, transparent)`,
+    padding: '3px 7px',
+    borderRadius: 4,
+    whiteSpace: 'nowrap',
     ...extra,
   };
 }
@@ -47,13 +40,11 @@ function getBlockedBy(task, allTasks) {
 }
 
 function getUnresolvedDependencies(task, allTasks) {
-  return getDependencies(task, allTasks).filter(candidate => candidate.status !== 'done');
+  return getDependencies(task, allTasks).filter(dep => dep.status !== 'done');
 }
 
-// Sort a set of sibling subtasks in dependency order (parents before children).
-// Handles cycles by visiting remaining tasks at the end.
-function topoSortSubtasks(subtasks) {
-  const ids = new Set(subtasks.map(t => t.id));
+function topologicalSubtasks(subtasks) {
+  const ids = new Set(subtasks.map(task => task.id));
   const visited = new Set();
   const result = [];
   function visit(task) {
@@ -61,88 +52,100 @@ function topoSortSubtasks(subtasks) {
     visited.add(task.id);
     for (const depId of (task.dependsOnIds ?? [])) {
       if (!ids.has(depId)) continue;
-      const dep = subtasks.find(t => t.id === depId);
+      const dep = subtasks.find(candidate => candidate.id === depId);
       if (dep) visit(dep);
     }
     result.push(task);
   }
-  for (const t of subtasks) visit(t);
+  for (const task of subtasks) visit(task);
   return result;
 }
 
-function DependencySelect({ task, candidates, onDependencyChange }) {
-  const [open, setOpen] = useState(false);
-  const selectedCount = (task.dependsOnIds ?? []).length;
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  const onClick = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    });
+  }, [text]);
+  return (
+    <button onClick={onClick} style={{
+      fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer',
+      borderRadius: 4, border: '1px solid var(--border)', background: 'transparent',
+      color: copied ? 'var(--idle)' : 'var(--fg3)', padding: '2px 8px',
+    }}>
+      {copied ? '✓ copied' : '⎘ copy ref'}
+    </button>
+  );
+}
 
+function StatusChip({ taskId, status, onStatusChange }) {
+  const [open, setOpen] = useState(false);
+  const meta = STATUS_META[status];
   return (
     <div style={{ position: 'relative' }}>
-      <button
-        onClick={() => setOpen(v => !v)}
-        style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: '11px',
-          cursor: 'pointer',
-          padding: '4px 10px',
-          borderRadius: '6px',
-          border: '1px solid var(--border)',
-          background: open ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'var(--surface)',
-          color: open ? 'var(--accent)' : 'var(--fg2)',
-        }}
-      >
-        dependencies ▾ {selectedCount > 0 ? `(${selectedCount})` : ''}
+      <button onClick={() => setOpen(v => !v)} style={{ ...chip(meta.color), cursor: 'pointer', background: `color-mix(in srgb, ${meta.color} 10%, transparent)` }}>
+        {meta.label} ▾
       </button>
-
       {open && (
         <>
-          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 9 }} />
           <div style={{
-            position: 'absolute',
-            top: 'calc(100% + 6px)',
-            left: 0,
-            zIndex: 100,
-            minWidth: 320,
-            maxWidth: 460,
-            maxHeight: 320,
-            overflowY: 'auto',
-            background: 'var(--surface2)',
-            border: '1px solid var(--border2)',
-            borderRadius: 'var(--radius)',
-            padding: '8px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 6,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+            position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 10,
+            display: 'flex', flexDirection: 'column', gap: 4, minWidth: 140,
+            background: 'var(--surface2)', border: '1px solid var(--border2)', borderRadius: 'var(--radius)', padding: 4,
+          }}>
+            {Object.entries(STATUS_META).map(([nextStatus, nextMeta]) => (
+              <button
+                key={nextStatus}
+                onClick={() => { setOpen(false); if (nextStatus !== status) onStatusChange(taskId, nextStatus); }}
+                style={{ ...chip(nextMeta.color), cursor: 'pointer', textAlign: 'left' }}
+              >
+                {nextMeta.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DependencyEditor({ task, allTasks, onDependencyChange }) {
+  const [open, setOpen] = useState(false);
+  const candidates = allTasks.filter(candidate => candidate.id !== task.id && candidate.parentId === task.parentId);
+  return (
+    <div style={{ position: 'relative' }}>
+      <button onClick={() => setOpen(v => !v)} style={{
+        fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer',
+        borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg2)', padding: '4px 10px',
+      }}>
+        dependencies ▾ {(task.dependsOnIds ?? []).length ? `(${task.dependsOnIds.length})` : ''}
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 19 }} />
+          <div style={{
+            position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 20,
+            minWidth: 320, maxWidth: 460, maxHeight: 320, overflowY: 'auto',
+            background: 'var(--surface2)', border: '1px solid var(--border2)', borderRadius: 'var(--radius)',
+            padding: 8, display: 'flex', flexDirection: 'column', gap: 6,
           }}>
             {candidates.length === 0 ? (
-              <div style={{ fontSize: '12px', color: 'var(--fg3)' }}>No sibling tasks available.</div>
+              <div style={{ fontSize: 12, color: 'var(--fg3)' }}>No sibling tasks available.</div>
             ) : candidates.map(candidate => {
               const selected = (task.dependsOnIds ?? []).includes(candidate.id);
-              const blocked = candidate.status !== 'done';
               return (
-                <label
-                  key={candidate.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: 8,
-                    padding: '6px 8px',
-                    borderRadius: '6px',
-                    background: selected ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'transparent',
-                    border: `1px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected}
-                    onChange={e => onDependencyChange(task.id, candidate.id, e.target.checked)}
-                    style={{ marginTop: 2 }}
-                  />
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
-                    <span style={{ fontSize: '12px', color: 'var(--fg)', overflowWrap: 'anywhere' }}>{candidate.title}</span>
-                    <span style={{ fontSize: '11px', color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>
-                      #{candidate.id} · {candidate.status}{blocked ? ' · unfinished' : ''}
-                    </span>
+                <label key={candidate.id} style={{
+                  display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer',
+                  padding: '6px 8px', borderRadius: 6, border: `1px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
+                  background: selected ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'transparent',
+                }}>
+                  <input type="checkbox" checked={selected} onChange={e => onDependencyChange(task.id, candidate.id, e.target.checked)} style={{ marginTop: 2 }} />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: 12, color: 'var(--fg)' }}>{candidate.title}</span>
+                    <span style={{ fontSize: 11, color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>#{candidate.id} · {candidate.status}</span>
                   </div>
                 </label>
               );
@@ -154,1054 +157,497 @@ function DependencySelect({ task, candidates, onDependencyChange }) {
   );
 }
 
-// ── TagEditor ─────────────────────────────────────────────────────────────────
-
-function TagEditor({ task, onAddTag, onRemoveTag }) {
-  const [adding, setAdding] = useState(false);
-  const [input, setInput] = useState('');
-
-  const addTag = () => {
-    const tag = input.trim();
-    if (!tag) return;
-    onAddTag(task.id, tag);
-    setInput('');
-    setAdding(false);
-  };
-
+function ProjectSelect({ value, projects, inherited, disabled, onChange }) {
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', minWidth: 0 }}>
-      {task.tags.map(tag => (
-        <span key={tag} style={{ ...chip('var(--accent)', { maxWidth: '100%' }), display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          #{tag}
-          <span
-            onClick={() => onRemoveTag(task.id, tag)}
-            style={{ cursor: 'pointer', opacity: 0.5, fontSize: '13px', lineHeight: 1 }}
-            onMouseEnter={e => e.target.style.opacity = 1}
-            onMouseLeave={e => e.target.style.opacity = 0.5}
-          >×</span>
-        </span>
+    <select
+      value={value ?? ''}
+      disabled={disabled}
+      onChange={e => onChange(e.target.value || null)}
+      style={{
+        fontFamily: 'var(--font-mono)', fontSize: 11, color: disabled ? 'var(--fg3)' : 'var(--fg2)',
+        background: disabled ? 'var(--surface)' : 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6,
+        padding: '5px 8px', minWidth: 180,
+      }}
+    >
+      <option value="">{inherited ? 'inherits from parent' : 'no project'}</option>
+      {projects.map(project => (
+        <option key={project.id} value={project.id}>{project.name} ({project.id})</option>
       ))}
-      {adding ? (
-        <input
-          autoFocus
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter') addTag();
-            if (e.key === 'Escape') { setAdding(false); setInput(''); }
-          }}
-          onBlur={() => { if (!input.trim()) { setAdding(false); setInput(''); } }}
-          placeholder="tag…"
-          style={{
-            fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--fg)',
-            background: 'var(--surface)', border: '1px solid var(--border2)',
-            borderRadius: '4px', padding: '2px 8px', width: 80, outline: 'none',
-          }}
-          onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-        />
-      ) : (
-        <button
-          onClick={() => setAdding(true)}
-          style={{
-            fontFamily: 'var(--font-mono)', fontSize: '13px', cursor: 'pointer',
-            width: 22, height: 22, borderRadius: '999px',
-            border: '1px dashed var(--border2)', background: 'none',
-            color: 'var(--fg3)', display: 'inline-flex', alignItems: 'center',
-            justifyContent: 'center', lineHeight: 1,
-          }}
-          onMouseEnter={e => { e.target.style.color = 'var(--accent)'; e.target.style.borderColor = 'var(--accent)'; }}
-          onMouseLeave={e => { e.target.style.color = 'var(--fg3)'; e.target.style.borderColor = 'var(--border2)'; }}
-          title="Add tag"
-        >+</button>
-      )}
-    </div>
+    </select>
   );
 }
 
-// ── StatusPicker ──────────────────────────────────────────────────────────────
-
-function StatusPicker({ current, onSelect }) {
+function RepoList({ project }) {
+  if (!project?.repos?.length) return <div style={{ fontSize: 12, color: 'var(--fg3)' }}>No repos attached.</div>;
   return (
-    <div style={{
-      position:      'absolute',
-      top:           '100%',
-      left:          0,
-      marginTop:     4,
-      background:    'var(--surface2)',
-      border:        '1px solid var(--border2)',
-      borderRadius:  'var(--radius)',
-      padding:       '4px',
-      zIndex:        100,
-      display:       'flex',
-      flexDirection: 'column',
-      gap:           3,
-      minWidth:      130,
-    }}>
-      {Object.entries(STATUS_META).map(([s, m]) => (
-        <button key={s} onClick={() => onSelect(s)} style={{
-          ...chip(m.color),
-          display:    'block',
-          width:      '100%',
-          textAlign:  'left',
-          cursor:     'pointer',
-          border:     `1px solid color-mix(in srgb, ${m.color} ${s === current ? 50 : 28}%, transparent)`,
-          background: `color-mix(in srgb, ${m.color} ${s === current ? 22 : 10}%, transparent)`,
-          padding:    '4px 8px',
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {project.repos.map(repo => (
+        <div key={repo.id} style={{
+          display: 'grid',
+          gridTemplateColumns: 'auto 1fr',
+          gap: '2px 8px',
+          padding: '4px 0',
+          borderBottom: '1px solid color-mix(in srgb, var(--border) 65%, transparent)',
         }}>
-          {m.label}
-        </button>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0 }}>
+            <span style={{ fontSize: 11, color: 'var(--fg2)', fontWeight: 500 }}>{repo.label}</span>
+            {repo.primary && <span style={{ fontSize: 10, color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>primary</span>}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--fg3)', fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}>
+            {repo.path ?? repo.url}
+          </div>
+        </div>
       ))}
     </div>
   );
 }
 
-// ── StatusChip (inline clickable) ─────────────────────────────────────────────
+function ProjectManager({ projects, tasks, refresh }) {
+  const [editingId, setEditingId] = useState(null);
+  const [draft, setDraft] = useState({ id: '', name: '', description: '', reposText: '' });
 
-function StatusChip({ taskId, status, onStatusChange }) {
-  const [picking, setPicking] = useState(false);
-  const sm = STATUS_META[status];
+  const load = useCallback((project) => {
+    setEditingId(project?.id ?? null);
+    setDraft({
+      id: project?.id ?? '',
+      name: project?.name ?? '',
+      description: project?.description ?? '',
+      reposText: (project?.repos ?? []).map(repo => `${repo.kind}|${repo.label}|${repo.path ?? repo.url ?? ''}|${repo.primary ? 'primary' : ''}`).join(', '),
+    });
+  }, []);
 
-  const handleSelect = useCallback((newStatus) => {
-    setPicking(false);
-    if (newStatus !== status) onStatusChange(taskId, newStatus);
-  }, [taskId, status, onStatusChange]);
+  const parseRepos = useCallback(() => {
+    return draft.reposText
+      .split(',')
+      .map(chunk => chunk.trim())
+      .filter(Boolean)
+      .map((entry, index) => {
+        const [kind = 'git', label = `repo-${index + 1}`, target = '', primary = ''] = entry.split('|').map(part => part.trim());
+        return {
+          id: `${label}-${index + 1}`,
+          kind,
+          label,
+          path: kind === 'local' ? target : undefined,
+          url: kind === 'local' ? undefined : target,
+          primary: primary === 'primary',
+        };
+      });
+  }, [draft.reposText]);
+
+  const save = useCallback(async () => {
+    const payload = {
+      id: draft.id || draft.name,
+      name: draft.name,
+      description: draft.description || undefined,
+      repos: parseRepos(),
+    };
+    const response = await fetch(editingId ? `/api/pi-todo/projects/${editingId}` : '/api/pi-todo/projects', {
+      method: editingId ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) return;
+    load(null);
+    refresh();
+  }, [draft, editingId, load, parseRepos, refresh]);
+
+  const remove = useCallback(async (projectId) => {
+    const response = await fetch(`/api/pi-todo/projects/${projectId}`, { method: 'DELETE' });
+    if (!response.ok) return;
+    refresh();
+  }, [refresh]);
 
   return (
-    <div style={{ position: 'relative', display: 'inline-block' }}>
-      <span onClick={() => setPicking(p => !p)}
-        style={{ ...chip(sm.color), cursor: 'pointer', userSelect: 'none' }}>
-        {sm.label} ▾
-      </span>
-      {picking && (
-        <>
-          <div onClick={() => setPicking(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
-          <StatusPicker current={status} onSelect={handleSelect} />
-        </>
-      )}
-    </div>
-  );
-}
-
-// ── SubtaskRow (in board card) ────────────────────────────────────────────────
-
-function SubtaskRow({ task, allTasks, onStatusChange, onSelect }) {
-  const sm = STATUS_META[task.status];
-  const [picking, setPicking] = useState(false);
-  const dependencies = getDependencies(task, allTasks);
-  const unresolved = dependencies.filter(candidate => candidate.status !== 'done');
-
-  const handleSelect = useCallback((newStatus) => {
-    setPicking(false);
-    if (newStatus !== task.status) onStatusChange(task.id, newStatus);
-  }, [task.id, task.status, onStatusChange]);
-
-  return (
-    <div style={{
-      display:    'flex',
-      alignItems: 'flex-start',
-      gap:        8,
-      padding:    '5px 0',
-      borderTop:  '1px solid var(--border)',
-    }}>
-      <div style={{ position: 'relative', flexShrink: 0, paddingTop: 1 }}>
-        <span onClick={() => setPicking(p => !p)}
-          style={{ ...chip(sm.color), cursor: 'pointer', userSelect: 'none', padding: '2px 6px' }}
-          title={sm.label}>
-          {sm.label.split(' ')[0]}
-        </span>
-        {picking && (
-          <>
-            <div onClick={() => setPicking(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
-            <StatusPicker current={task.status} onSelect={handleSelect} />
-          </>
-        )}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg3)' }}>projects</div>
+        <div style={{ flex: 1 }} />
+        <button onClick={() => load(null)} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer' }}>+ new project</button>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-        <span
-          onClick={() => onSelect(task.id)}
-          style={{
-            fontSize:       '12px',
-            color:          task.status === 'done' ? 'var(--fg3)' : 'var(--fg2)',
-            lineHeight:     1.4,
-            textDecoration: task.status === 'done' ? 'line-through' : 'none',
-            cursor:         'pointer',
-            minWidth:       0,
-            overflowWrap:   'anywhere',
-          }}
-          onMouseEnter={e => e.target.style.color = 'var(--accent)'}
-          onMouseLeave={e => e.target.style.color = task.status === 'done' ? 'var(--fg3)' : 'var(--fg2)'}
-        >
-          {task.title}
-        </span>
-        {(dependencies.length > 0 || unresolved.length > 0) && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {unresolved.length > 0 && <span style={chip('var(--waiting)')}>blocked</span>}
-            {dependencies.map(dep => (
-              <span key={dep.id} style={chip(dep.status === 'done' ? 'var(--idle)' : 'var(--fg3)', { maxWidth: 180 })} title={`${dep.title} — ${dep.status}`}>
-                ← {dep.title}
-              </span>
-            ))}
+
+      {(editingId !== null || draft.name || draft.id || draft.description || draft.reposText) && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 10, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface)' }}>
+          <input value={draft.id} onChange={e => setDraft(prev => ({ ...prev, id: e.target.value }))} placeholder="project id" style={inputStyle} />
+          <input value={draft.name} onChange={e => setDraft(prev => ({ ...prev, name: e.target.value }))} placeholder="project name" style={inputStyle} />
+          <textarea value={draft.description} onChange={e => setDraft(prev => ({ ...prev, description: e.target.value }))} placeholder="description" style={{ ...inputStyle, minHeight: 60 }} />
+          <textarea value={draft.reposText} onChange={e => setDraft(prev => ({ ...prev, reposText: e.target.value }))} placeholder="repos: local|workspace|/path|primary, github|origin|https://..." style={{ ...inputStyle, minHeight: 64 }} />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={save} style={buttonStyle}>save</button>
+            <button onClick={() => load(null)} style={buttonStyle}>cancel</button>
           </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── TaskCard (in board) ───────────────────────────────────────────────────────
-
-function TaskCard({ task, allTasks, onStatusChange, onSelect, isSelected, draggingId, onDragStart, onDragEnd }) {
-  const [expanded, setExpanded] = useState(false);
-  const subtasks  = allTasks.filter(t => t.parentId === task.id);
-  const doneCount = subtasks.filter(t => t.status === 'done').length;
-  const blockedSubtaskCount = subtasks.filter(t => getUnresolvedDependencies(t, allTasks).length > 0).length;
-  const taskDependencies = getDependencies(task, allTasks);
-  const unresolvedTaskDependencies = taskDependencies.filter(t => t.status !== 'done');
-  const isDragging = draggingId === task.id;
-
-  return (
-    <div
-      draggable
-      onDragStart={e => { e.dataTransfer.setData('text/plain', task.id); e.dataTransfer.effectAllowed = 'move'; onDragStart(task.id); }}
-      onDragEnd={onDragEnd}
-      style={{
-        background:    'var(--surface)',
-        border:        `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
-        borderRadius:  'var(--radius)',
-        padding:       '10px 12px',
-        display:       'flex',
-        flexDirection: 'column',
-        gap:           7,
-        opacity:       isDragging ? 0.4 : 1,
-        cursor:        'grab',
-        transition:    'opacity 0.15s',
-      }}>
-      {/* title — clickable */}
-      <div
-        onClick={() => onSelect(task.id)}
-        style={{
-          fontSize:     '13px',
-          fontWeight:   500,
-          color:        isSelected ? 'var(--accent)' : 'var(--fg)',
-          lineHeight:   1.35,
-          cursor:       'pointer',
-          minWidth:     0,
-          overflowWrap: 'anywhere',
-        }}
-        onMouseEnter={e => { if (!isSelected) e.currentTarget.style.color = 'var(--accent)'; }}
-        onMouseLeave={e => { if (!isSelected) e.currentTarget.style.color = 'var(--fg)'; }}
-      >
-        {task.title}
-      </div>
-
-      {/* chips */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', minWidth: 0 }}>
-        {task.tags.map(tag => (
-          <span key={tag} style={chip('var(--accent)', { maxWidth: '100%' })}>#{tag}</span>
-        ))}
-        {unresolvedTaskDependencies.length > 0 && (
-          <span style={chip('var(--waiting)')}>blocked by {unresolvedTaskDependencies.length}</span>
-        )}
-        {blockedSubtaskCount > 0 && (
-          <span style={chip('hsl(25,80%,60%)')}>{blockedSubtaskCount} blocked subtask{blockedSubtaskCount !== 1 ? 's' : ''}</span>
-        )}
-        {task.log.length > 0 && (
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--fg3)' }}>
-            {task.log.length} note{task.log.length !== 1 ? 's' : ''}
-          </span>
-        )}
-      </div>
-
-      {/* status + subtask toggle */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
-        <StatusChip taskId={task.id} status={task.status} onStatusChange={onStatusChange} />
-        {subtasks.length > 0 && (
-          <button onClick={() => setExpanded(v => !v)} style={{
-            fontFamily:   'var(--font-mono)',
-            fontSize:     '11px',
-            cursor:       'pointer',
-            padding:      '2px 7px',
-            borderRadius: '4px',
-            border:       '1px solid var(--border)',
-            background:   'transparent',
-            color:        doneCount === subtasks.length ? 'var(--idle)' : 'var(--fg3)',
-            maxWidth:     '100%',
-          }}>
-            {expanded ? '▴' : '▾'} {doneCount}/{subtasks.length} subtasks
-          </button>
-        )}
-        <div style={{ flex: 1, minWidth: 0 }} />
-        <CopyButton text={`task #${task.id}`} />
-      </div>
-
-      {taskDependencies.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, minWidth: 0 }}>
-          {taskDependencies.map(dep => (
-            <span key={dep.id} style={chip(dep.status === 'done' ? 'var(--idle)' : 'var(--fg3)', { maxWidth: '100%' })} title={`${dep.title} — ${dep.status}`}>
-              depends on ← {dep.title}
-            </span>
-          ))}
         </div>
       )}
 
-      {/* subtask list */}
-      {expanded && subtasks.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {subtasks.map(sub => (
-            <SubtaskRow key={sub.id} task={sub} allTasks={allTasks} onStatusChange={onStatusChange} onSelect={onSelect} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Column ────────────────────────────────────────────────────────────────────
-
-function Column({ status, tasks, allTasks, onStatusChange, onSelect, selectedId, draggingId, onDragStart, onDragEnd, isDragOver, onDragOver, onDragLeave, onDrop }) {
-  const sm = STATUS_META[status];
-  return (
-    <div
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-      style={{
-        display:       'flex',
-        flexDirection: 'column',
-        gap:           8,
-        minWidth:      0,
-        borderRadius:  'var(--radius)',
-        outline:       isDragOver ? `2px dashed color-mix(in srgb, ${sm.color} 60%, transparent)` : '2px dashed transparent',
-        transition:    'outline 0.1s',
-        padding:       isDragOver ? '4px' : '4px',
-      }}>
-      <div style={{
-        display:      'flex',
-        alignItems:   'center',
-        gap:          8,
-        paddingBottom: 8,
-        borderBottom: `2px solid color-mix(in srgb, ${sm.color} ${isDragOver ? 80 : 40}%, transparent)`,
-        transition:   'border-color 0.1s',
-      }}>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: sm.color, fontWeight: 600 }}>
-          {sm.label}
-        </span>
-        <span style={{
-          fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--fg3)',
-          background: 'var(--surface)', border: '1px solid var(--border)',
-          borderRadius: '10px', padding: '1px 7px',
-        }}>
-          {tasks.length}
-        </span>
-      </div>
-      {tasks.length === 0
-        ? <div style={{
-            color: isDragOver ? sm.color : 'var(--fg3)',
-            fontSize: '12px', fontFamily: 'var(--font-mono)', padding: '8px 0',
-            transition: 'color 0.1s',
-          }}>
-            {isDragOver ? '⊕ drop here' : '—'}
+      {projects.map(project => {
+        const parentTasks = tasks.filter(task => !task.parentId && task.effectiveProjectId === project.id).length;
+        return (
+          <div key={project.id} style={{ padding: 10, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, color: 'var(--fg)', fontWeight: 600 }}>{project.name}</span>
+              <span style={chip('var(--accent)')}>{project.id}</span>
+              <span style={chip('var(--fg3)')}>{parentTasks} parent tasks</span>
+              <div style={{ flex: 1 }} />
+              <button onClick={() => load(project)} style={buttonStyle}>edit</button>
+              <button onClick={() => remove(project.id)} style={buttonStyle}>delete</button>
+            </div>
+            {project.description && <div style={{ fontSize: 12, color: 'var(--fg2)' }}>{project.description}</div>}
+            <RepoList project={project} />
           </div>
-        : tasks.map(t => (
-            <TaskCard
-              key={t.id} task={t} allTasks={allTasks}
-              onStatusChange={onStatusChange} onSelect={onSelect}
-              isSelected={selectedId === t.id}
-              draggingId={draggingId} onDragStart={onDragStart} onDragEnd={onDragEnd}
-            />
-          ))
-      }
-      {/* drop target hint when column has cards */}
-      {tasks.length > 0 && isDragOver && (
-        <div style={{
-          border:       `1px dashed color-mix(in srgb, ${sm.color} 50%, transparent)`,
-          borderRadius: 'var(--radius)',
-          padding:      '8px',
-          textAlign:    'center',
-          fontFamily:   'var(--font-mono)',
-          fontSize:     '11px',
-          color:        sm.color,
-        }}>
-          ⊕ drop here
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Description renderer ──────────────────────────────────────────────────────
-
-function Description({ text }) {
-  if (!text) return null;
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-      {text.split('\n').map((line, i) => {
-        if (line.startsWith('## '))
-          return <div key={i} style={{ fontWeight: 600, color: 'var(--fg)', fontSize: '12px', marginTop: 8 }}>{line.slice(3)}</div>;
-        if (line.startsWith('# '))
-          return <div key={i} style={{ fontWeight: 700, color: 'var(--fg)', fontSize: '13px', marginTop: 8 }}>{line.slice(2)}</div>;
-        if (line.startsWith('- '))
-          return <div key={i} style={{ display: 'flex', gap: 6, fontSize: '12px', color: 'var(--fg2)' }}>
-            <span style={{ color: 'var(--fg3)', flexShrink: 0 }}>–</span><span>{line.slice(2)}</span>
-          </div>;
-        if (line === '')
-          return <div key={i} style={{ height: 4 }} />;
-        return <div key={i} style={{ fontSize: '12px', color: 'var(--fg2)', lineHeight: 1.5, overflowWrap: 'anywhere' }}>{line}</div>;
+        );
       })}
     </div>
   );
 }
 
-// ── CopyButton ────────────────────────────────────────────────────────────────
-
-function CopyButton({ text }) {
-  const [copied, setCopied] = useState(false);
-
-  const handle = useCallback(() => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }, [text]);
-
+function TaskCard({ task, allTasks, onSelect, onStatusChange, selectedId }) {
+  const subtasks = allTasks.filter(candidate => candidate.parentId === task.id);
+  const unresolvedTaskDeps = getUnresolvedDependencies(task, allTasks);
   return (
-    <button onClick={handle} title={`Copy: ${text}`} style={{
-      fontFamily:   'var(--font-mono)',
-      fontSize:     '11px',
-      cursor:       'pointer',
-      padding:      '2px 8px',
-      borderRadius: '4px',
-      border:       `1px solid ${copied ? 'color-mix(in srgb, var(--idle) 40%, transparent)' : 'var(--border)'}`,
-      background:    copied ? 'color-mix(in srgb, var(--idle) 12%, transparent)' : 'transparent',
-      color:         copied ? 'var(--idle)' : 'var(--fg3)',
-      transition:   'all 0.15s',
+    <div onClick={() => onSelect(task.id)} style={{
+      display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', cursor: 'pointer',
+      borderRadius: 'var(--radius)', border: `1px solid ${selectedId === task.id ? 'var(--accent)' : 'var(--border)'}`,
+      background: 'var(--surface)',
     }}>
-      {copied ? '✓ copied' : '⎘ copy ref'}
-    </button>
-  );
-}
-
-// ── DetailPanel ───────────────────────────────────────────────────────────────
-
-function DetailPanel({ taskId, allTasks, onStatusChange, onDependencyChange, onAddTag, onRemoveTag, onClose, isOpen }) {
-  const [history, setHistory] = useState([taskId]);
-  const currentId = history[history.length - 1];
-  const task = allTasks.find(t => t.id === currentId);
-
-  // Reset history when a new task is selected from outside
-  useEffect(() => {
-    setHistory([taskId]);
-  }, [taskId]);
-
-  const navigate = useCallback((id) => {
-    setHistory(h => [...h, id]);
-  }, []);
-
-  const goBack = useCallback(() => {
-    setHistory(h => h.slice(0, -1));
-  }, []);
-
-  if (!task) return null;
-
-  const parent   = task.parentId ? allTasks.find(t => t.id === task.parentId) : null;
-  const subtasks = allTasks.filter(t => t.parentId === task.id);
-  const dependencies = getDependencies(task, allTasks);
-  const blockedBy = getBlockedBy(task, allTasks);
-  const unresolvedDependencies = dependencies.filter(t => t.status !== 'done');
-  const dependencyCandidates = allTasks.filter(candidate => candidate.id !== task.id && candidate.parentId === task.parentId);
-
-  const sectionLabel = {
-    fontFamily:    'var(--font-mono)',
-    fontSize:      '10px',
-    color:         'var(--fg3)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.06em',
-    marginBottom:  6,
-  };
-
-  const divider = {
-    borderTop: '1px solid var(--border)',
-    paddingTop: 14,
-    marginTop:  2,
-  };
-
-  return (
-    <div style={{
-      width:         '100%',
-      height:        '100%',
-      maxWidth:      '100%',
-      minWidth:      0,
-      flexShrink:    0,
-      borderLeft:    '1px solid var(--border)',
-      display:       'flex',
-      flexDirection: 'column',
-      overflow:      'hidden',
-      background:    'var(--bg2)',
-      opacity:       isOpen ? 1 : 0,
-      transform:     isOpen ? 'translateX(0)' : 'translateX(16px)',
-      transition:    'opacity 180ms ease, transform 180ms ease',
-    }}>
-      {/* header */}
-      <div style={{
-        display:      'flex',
-        alignItems:   'center',
-        gap:          8,
-        padding:      '10px 14px',
-        borderBottom: '1px solid var(--border)',
-        flexShrink:   0,
-        flexWrap:     'wrap',
-        minWidth:     0,
-      }}>
-        {history.length > 1 && (
-          <button onClick={goBack} style={{
-            fontFamily: 'var(--font-mono)', fontSize: '12px', cursor: 'pointer',
-            background: 'transparent', border: '1px solid var(--border)',
-            borderRadius: '4px', color: 'var(--fg2)', padding: '2px 8px',
-          }}>← back</button>
-        )}
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--fg3)' }}>
-          #{task.id}
-        </span>
+      <div style={{ fontSize: 13, color: selectedId === task.id ? 'var(--accent)' : 'var(--fg)', fontWeight: 500 }}>{task.title}</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+        {task.project && <span style={chip('var(--accent)')}>{task.project.name}</span>}
+        {unresolvedTaskDeps.length > 0 && <span style={chip('var(--waiting)')}>blocked by {unresolvedTaskDeps.length}</span>}
+        {subtasks.length > 0 && <span style={chip('var(--fg3)')}>{subtasks.filter(child => child.status === 'done').length}/{subtasks.length} subtasks</span>}
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <StatusChip taskId={task.id} status={task.status} onStatusChange={onStatusChange} />
         <div style={{ flex: 1 }} />
         <CopyButton text={`task #${task.id}`} />
-        <button onClick={onClose} style={{
-          fontFamily: 'var(--font-mono)', fontSize: '13px', cursor: 'pointer',
-          background: 'transparent', border: 'none', color: 'var(--fg3)', lineHeight: 1,
-          padding: '2px 4px',
-        }}>✕</button>
-      </div>
-
-      {/* scrollable body */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '14px', display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
-
-        {/* title */}
-        <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--fg)', lineHeight: 1.4, overflowWrap: 'anywhere' }}>
-          {task.title}
-        </div>
-
-        {/* meta chips */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0, alignItems: 'center' }}>
-          <StatusChip taskId={task.id} status={task.status} onStatusChange={onStatusChange} />
-          {unresolvedDependencies.length > 0 && <span style={chip('var(--waiting)')}>blocked</span>}
-        </div>
-
-        {/* tags — only editable on parent tasks; children inherit */}
-        {!task.parentId ? (
-          <TagEditor task={task} onAddTag={onAddTag} onRemoveTag={onRemoveTag} />
-        ) : parent && parent.tags.length > 0 ? (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' }}>
-            {parent.tags.map(tag => (
-              <span key={tag} style={{ ...chip('var(--accent)', { maxWidth: '100%' }), opacity: 0.6 }}>#{tag}</span>
-            ))}
-            <span style={{ fontSize: 10, color: 'var(--fg3)' }}>inherited</span>
-          </div>
-        ) : null}
-
-        {/* parent link */}
-        {parent && (
-          <div style={divider}>
-            <div style={sectionLabel}>parent</div>
-            <div
-              onClick={() => navigate(parent.id)}
-              style={{
-                fontSize: '12px', color: 'var(--fg2)', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', gap: 6,
-              }}
-              onMouseEnter={e => e.currentTarget.style.color = 'var(--accent)'}
-              onMouseLeave={e => e.currentTarget.style.color = 'var(--fg2)'}
-            >
-              <span style={{ color: 'var(--fg3)', flexShrink: 0 }}>↑</span>
-              <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{parent.title}</span>
-            </div>
-          </div>
-        )}
-
-        {/* dependencies */}
-        {(dependencies.length > 0 || blockedBy.length > 0 || dependencyCandidates.length > 0) && (
-          <div style={divider}>
-            <div style={sectionLabel}>dependencies</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {dependencyCandidates.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ fontSize: '11px', color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>edit dependencies</div>
-                  <DependencySelect
-                    task={task}
-                    candidates={dependencyCandidates}
-                    onDependencyChange={onDependencyChange}
-                  />
-                </div>
-              )}
-              {dependencies.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <div style={{ fontSize: '11px', color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>depends on</div>
-                  {dependencies.map(dep => {
-                    const blocked = dep.status !== 'done';
-                    return (
-                      <div
-                        key={dep.id}
-                        onClick={() => navigate(dep.id)}
-                        style={{
-                          display: 'flex', alignItems: 'flex-start', gap: 8,
-                          padding: '6px 8px', borderRadius: '6px', cursor: 'pointer',
-                          background: 'var(--surface)', border: `1px solid ${blocked ? 'color-mix(in srgb, var(--waiting) 40%, transparent)' : 'var(--border)'}`,
-                        }}
-                      >
-                        <span style={{ ...chip(blocked ? 'var(--waiting)' : 'var(--idle)'), flexShrink: 0, padding: '2px 5px' }}>
-                          {blocked ? 'blocked' : 'ready'}
-                        </span>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                          <span style={{ fontSize: '12px', color: 'var(--fg)', overflowWrap: 'anywhere' }}>{dep.title}</span>
-                          <span style={{ fontSize: '11px', color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>#{dep.id} · {dep.status}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              {blockedBy.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <div style={{ fontSize: '11px', color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>blocking</div>
-                  {blockedBy.map(dep => (
-                    <div
-                      key={dep.id}
-                      onClick={() => navigate(dep.id)}
-                      style={{
-                        display: 'flex', alignItems: 'flex-start', gap: 8,
-                        padding: '6px 8px', borderRadius: '6px', cursor: 'pointer',
-                        background: 'var(--surface)', border: '1px solid var(--border)',
-                      }}
-                    >
-                      <span style={{ ...chip(dep.status === 'done' ? 'var(--idle)' : 'var(--fg3)'), flexShrink: 0, padding: '2px 5px' }}>
-                        {dep.status}
-                      </span>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                        <span style={{ fontSize: '12px', color: 'var(--fg)', overflowWrap: 'anywhere' }}>{dep.title}</span>
-                        <span style={{ fontSize: '11px', color: 'var(--fg3)', fontFamily: 'var(--font-mono)' }}>#{dep.id}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* description */}
-        {task.description && (
-          <div style={divider}>
-            <div style={sectionLabel}>description</div>
-            <Description text={task.description} />
-          </div>
-        )}
-
-        {/* subtasks */}
-        {subtasks.length > 0 && (() => {
-          const sibIds = new Set(subtasks.map(t => t.id));
-          const sorted = topoSortSubtasks(subtasks);
-
-          // Compute depth: 0 for roots, max(parent depths)+1 for children
-          const depths = {};
-          for (const sub of sorted) {
-            const sibDeps = (sub.dependsOnIds ?? []).filter(id => sibIds.has(id));
-            depths[sub.id] = sibDeps.length === 0
-              ? 0
-              : Math.max(...sibDeps.map(id => depths[id] ?? 0)) + 1;
-          }
-
-          const INDENT = 18;
-
-          return (
-            <div style={divider}>
-              <div style={sectionLabel}>
-                subtasks — {subtasks.filter(t => t.status === 'done').length}/{subtasks.length} done
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {sorted.map(sub => {
-                  const depth = depths[sub.id] ?? 0;
-                  const sibDeps = (sub.dependsOnIds ?? []).filter(id => sibIds.has(id));
-                  const isBlocked = sibDeps.some(id => subtasks.find(t => t.id === id)?.status !== 'done');
-                  const sm = STATUS_META[sub.status];
-                  const connColor = isBlocked
-                    ? 'color-mix(in srgb, var(--waiting) 55%, transparent)'
-                    : 'var(--border2)';
-
-                  return (
-                    <div key={sub.id} style={{ display: 'flex', alignItems: 'center' }}>
-
-                      {/* tree connector */}
-                      {depth > 0 && (
-                        <div style={{
-                          flexShrink: 0,
-                          width:      depth * INDENT,
-                          height:     32,
-                          position:   'relative',
-                        }}>
-                          {/* vertical segment from parent */}
-                          <div style={{
-                            position:   'absolute',
-                            left:       (depth - 1) * INDENT + 9,
-                            top:        0,
-                            width:      1.5,
-                            height:     16,
-                            background: connColor,
-                          }} />
-                          {/* horizontal elbow */}
-                          <div style={{
-                            position:     'absolute',
-                            left:         (depth - 1) * INDENT + 9,
-                            top:          16,
-                            width:        INDENT - 9 + 4,
-                            height:       1.5,
-                            background:   connColor,
-                            borderRadius: '0 0 0 2px',
-                          }} />
-                        </div>
-                      )}
-
-                      {/* task row */}
-                      <div
-                        onClick={() => navigate(sub.id)}
-                        style={{
-                          flex:         1,
-                          display:      'flex',
-                          alignItems:   'center',
-                          gap:          8,
-                          padding:      '6px 10px',
-                          borderRadius: '6px',
-                          cursor:       'pointer',
-                          background:   'var(--surface)',
-                          border:       `1px solid ${isBlocked ? 'color-mix(in srgb, var(--waiting) 35%, transparent)' : 'var(--border)'}`,
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.borderColor = isBlocked ? 'color-mix(in srgb, var(--waiting) 55%, transparent)' : 'var(--border2)'}
-                        onMouseLeave={e => e.currentTarget.style.borderColor = isBlocked ? 'color-mix(in srgb, var(--waiting) 35%, transparent)' : 'var(--border)'}
-                      >
-                        <span style={{ ...chip(sm.color), padding: '2px 5px', flexShrink: 0 }}>
-                          {sm.label.split(' ')[0]}
-                        </span>
-                        <span style={{
-                          fontSize:       '12px',
-                          color:          sub.status === 'done' ? 'var(--fg3)' : 'var(--fg)',
-                          textDecoration: sub.status === 'done' ? 'line-through' : 'none',
-                          lineHeight:     1.4,
-                          flex:           1,
-                          overflowWrap:   'anywhere',
-                        }}>
-                          {sub.title}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* log */}
-        {task.log.length > 0 && (
-          <div style={divider}>
-            <div style={sectionLabel}>log</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {task.log.map((entry, i) => (
-                <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '10px',
-                      color: entry.author === 'pi' ? 'var(--waiting)' : 'var(--idle)',
-                    }}>
-                      {entry.author}
-                    </span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--fg3)' }}>
-                      {fmtDate(entry.at)}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'var(--fg2)', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
-                    {entry.text}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* timestamps */}
-        <div style={{ ...divider, display: 'grid', gridTemplateColumns: '80px 1fr', gap: '4px 8px' }}>
-          {[['created', task.createdAt], ['updated', task.updatedAt]].map(([l, v]) => (
-            <React.Fragment key={l}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--fg3)' }}>{l}</span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--fg3)' }}>{fmtDate(v)}</span>
-            </React.Fragment>
-          ))}
-        </div>
-
       </div>
     </div>
   );
 }
 
-// ── page ──────────────────────────────────────────────────────────────────────
+function Column({ status, tasks, allTasks, onSelect, onStatusChange, selectedId }) {
+  const meta = STATUS_META[status];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 8, borderBottom: `2px solid color-mix(in srgb, ${meta.color} 35%, transparent)` }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: meta.color, fontWeight: 600 }}>{meta.label}</span>
+        <span style={{ ...chip('var(--fg3)'), background: 'var(--surface)' }}>{tasks.length}</span>
+      </div>
+      {tasks.length === 0 ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--fg3)' }}>—</div> : tasks.map(task => (
+        <TaskCard key={task.id} task={task} allTasks={allTasks} onSelect={onSelect} onStatusChange={onStatusChange} selectedId={selectedId} />
+      ))}
+    </div>
+  );
+}
+
+function DetailPanel({ taskId, state, refresh, onClose, onStatusChange }) {
+  const { tasks, projects } = state;
+  const task = tasks.find(candidate => candidate.id === taskId);
+  if (!task) return null;
+  const parent = task.parentId ? tasks.find(candidate => candidate.id === task.parentId) : null;
+  const dependencies = getDependencies(task, tasks);
+  const blockedBy = getBlockedBy(task, tasks);
+  const subtasks = topologicalSubtasks(tasks.filter(candidate => candidate.parentId === task.id));
+  const assignedProject = task.project ?? null;
+
+  const updateTask = useCallback(async (payload) => {
+    const response = await fetch(`/api/pi-todo/tasks/${task.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (response.ok) refresh();
+  }, [refresh, task.id]);
+
+  const onDependencyChange = useCallback(async (taskId, dependencyId, enabled) => {
+    const current = tasks.find(candidate => candidate.id === taskId);
+    if (!current) return;
+    const nextDependsOnIds = enabled
+      ? [...new Set([...(current.dependsOnIds ?? []), dependencyId])]
+      : (current.dependsOnIds ?? []).filter(id => id !== dependencyId);
+    const response = await fetch(`/api/pi-todo/tasks/${taskId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dependsOnIds: nextDependsOnIds }),
+    });
+    if (response.ok) refresh();
+  }, [refresh, tasks]);
+
+  return (
+    <div style={{
+      width: 'clamp(340px, 38vw, 760px)', maxWidth: '100%', borderLeft: '1px solid var(--border)', background: 'var(--bg2)',
+      display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg3)' }}>#{task.id}</span>
+        <div style={{ flex: 1 }} />
+        <CopyButton text={`task #${task.id}`} />
+        <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--fg3)', cursor: 'pointer' }}>✕</button>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)', lineHeight: 1.4 }}>{task.title}</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <StatusChip taskId={task.id} status={task.status} onStatusChange={onStatusChange} />
+          {!task.parentId ? (
+            <ProjectSelect value={task.projectId ?? ''} projects={projects} onChange={projectId => updateTask({ projectId })} />
+          ) : (
+            <ProjectSelect value={assignedProject?.id ?? ''} projects={projects} inherited disabled onChange={() => {}} />
+          )}
+        </div>
+
+        {assignedProject && (
+          <section style={sectionStyle}>
+            <SectionTitle>project</SectionTitle>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontSize: 13, color: 'var(--fg)', fontWeight: 600 }}>{assignedProject.name}</span>
+              <span style={chip('var(--accent)')}>{assignedProject.id}</span>
+              {task.parentId && <span style={chip('var(--fg3)')}>inherited</span>}
+            </div>
+            {assignedProject.description && <div style={{ fontSize: 12, color: 'var(--fg2)' }}>{assignedProject.description}</div>}
+            <RepoList project={assignedProject} />
+          </section>
+        )}
+
+        {parent && (
+          <section style={sectionStyle}>
+            <SectionTitle>parent</SectionTitle>
+            <button onClick={() => refresh(parent.id)} style={linkButtonStyle}>{parent.title}</button>
+          </section>
+        )}
+
+        <section style={sectionStyle}>
+          <SectionTitle>dependencies</SectionTitle>
+          {!task.parentId && <div style={{ fontSize: 12, color: 'var(--fg3)' }}>Parent tasks only support cross-column status movement. Dependency editing is available for sibling tasks and subtasks.</div>}
+          <DependencyEditor task={task} allTasks={tasks} onDependencyChange={onDependencyChange} />
+          {dependencies.map(dep => (
+            <div key={dep.id} style={rowStyle}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={chip(dep.status === 'done' ? 'var(--idle)' : 'var(--waiting)')}>{dep.status}</span>
+                <span style={{ fontSize: 12, color: 'var(--fg)' }}>{dep.title}</span>
+              </div>
+            </div>
+          ))}
+          {blockedBy.length > 0 && (
+            <>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg3)', textTransform: 'uppercase' }}>blocking</div>
+              {blockedBy.map(dep => <div key={dep.id} style={rowStyle}><span style={{ fontSize: 12, color: 'var(--fg)' }}>{dep.title}</span></div>)}
+            </>
+          )}
+        </section>
+
+        {task.description && (
+          <section style={sectionStyle}>
+            <SectionTitle>description</SectionTitle>
+            <div style={{ fontSize: 12, color: 'var(--fg2)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{task.description}</div>
+          </section>
+        )}
+
+        {subtasks.length > 0 && (
+          <section style={sectionStyle}>
+            <SectionTitle>subtasks</SectionTitle>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {subtasks.map(subtask => (
+                <div key={subtask.id} style={rowStyle}>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={chip(STATUS_META[subtask.status].color)}>{STATUS_META[subtask.status].label.split(' ')[0]}</span>
+                    <span style={{ fontSize: 12, color: subtask.status === 'done' ? 'var(--fg3)' : 'var(--fg)', textDecoration: subtask.status === 'done' ? 'line-through' : 'none' }}>{subtask.title}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {task.log.length > 0 && (
+          <section style={sectionStyle}>
+            <SectionTitle>log</SectionTitle>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {task.log.map((entry, index) => (
+                <div key={index} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: entry.author === 'pi' ? 'var(--waiting)' : 'var(--idle)' }}>{entry.author}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg3)' }}>{fmtDate(entry.at)}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--fg2)', lineHeight: 1.5 }}>{entry.text}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const inputStyle = {
+  width: '100%',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  color: 'var(--fg)',
+  background: 'var(--bg2)',
+  border: '1px solid var(--border2)',
+  borderRadius: 6,
+  padding: '6px 8px',
+  boxSizing: 'border-box',
+};
+
+const buttonStyle = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  cursor: 'pointer',
+  borderRadius: 6,
+  border: '1px solid var(--border)',
+  background: 'transparent',
+  color: 'var(--fg2)',
+  padding: '4px 10px',
+};
+
+const sectionStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
+  paddingTop: 12,
+  borderTop: '1px solid var(--border)',
+};
+
+const rowStyle = {
+  padding: '8px 10px',
+  borderRadius: 8,
+  border: '1px solid var(--border)',
+  background: 'var(--surface)',
+};
+
+const linkButtonStyle = {
+  fontSize: 12,
+  color: 'var(--accent)',
+  background: 'transparent',
+  border: 'none',
+  cursor: 'pointer',
+  padding: 0,
+  textAlign: 'left',
+};
+
+function SectionTitle({ children }) {
+  return <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{children}</div>;
+}
 
 export default function TasksPage({ params, setParams }) {
-  const [tasks, setTasks]           = useState([]);
-  const [loading, setLoading]       = useState(true);
-  const [draggingId, setDraggingId] = useState(null);
-  const [dragOverStatus, setDragOverStatus] = useState(null);
-  const [renderedSelectedId, setRenderedSelectedId] = useState(params.task ?? null);
-  const [panelOpen, setPanelOpen] = useState(Boolean(params.task));
-  const [statusError, setStatusError] = useState(null);
+  const [state, setState] = useState({ tasks: [], projects: [] });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [showProjects, setShowProjects] = useState(params.view === 'projects');
 
-  // Persist filter + selection in URL params
-  const activeTag  = params.tag    ?? null;
-  const showDone   = params.done   === '1';
-  const selectedId = params.task   ?? null;
+  const selectedTaskId = params.task ?? null;
+  const activeProject = params.project ?? null;
+  const showDone = params.done === '1';
 
-  const setActiveTag  = (tag)  => setParams({ ...params, tag: tag ?? null });
-  const setShowDone   = (fn)   => setParams({ ...params, done: fn(showDone) ? '1' : null });
-  const setSelectedId = (id)   => setParams({ ...params, task: id ?? null });
-
-  const fetchTasks = useCallback(() => {
-    fetch('/api/pi-todo/tasks')
-      .then(r => r.json())
-      .then(data => { setTasks(data); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    fetchTasks();
-    const id = setInterval(fetchTasks, 5000);
-    return () => clearInterval(id);
-  }, [fetchTasks]);
-
-  useEffect(() => {
-    if (selectedId) {
-      setRenderedSelectedId(selectedId);
-      const raf = requestAnimationFrame(() => setPanelOpen(true));
-      return () => cancelAnimationFrame(raf);
+  const refresh = useCallback(async (taskToOpen) => {
+    try {
+      const response = await fetch('/api/pi-todo/state');
+      const next = await response.json();
+      setState(next);
+      setLoading(false);
+      if (taskToOpen) setParams({ ...params, task: taskToOpen });
+    } catch {
+      setLoading(false);
     }
+  }, [setParams]);
 
-    if (!renderedSelectedId) {
-      setPanelOpen(false);
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 5000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  const visibleTasks = useMemo(() => {
+    const filtered = activeProject
+      ? state.tasks.filter(task => task.effectiveProjectId === activeProject)
+      : state.tasks;
+    return showDone ? filtered : filtered.filter(task => task.status !== 'done');
+  }, [activeProject, showDone, state.tasks]);
+
+  const parentTasks = visibleTasks.filter(task => !task.parentId);
+
+  const onStatusChange = useCallback(async (taskId, status) => {
+    setError(null);
+    const response = await fetch(`/api/pi-todo/tasks/${taskId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      setError(payload?.error ?? 'Status update failed');
       return;
     }
+    refresh();
+  }, [refresh]);
 
-    setPanelOpen(false);
-    const timeout = setTimeout(() => setRenderedSelectedId(null), 180);
-    return () => clearTimeout(timeout);
-  }, [selectedId, renderedSelectedId]);
-
-  const handleStatusChange = useCallback(async (id, status) => {
-    setStatusError(null);
-    const previousTask = tasks.find(t => t.id === id);
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
-    try {
-      const response = await fetch(`/api/pi-todo/tasks/${id}`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ status }),
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        const unresolved = payload?.unresolvedDependencies?.map(dep => `#${dep.id}`).join(', ');
-        setStatusError(payload?.error ? `${payload.error}${unresolved ? `: ${unresolved}` : ''}` : 'Status update failed');
-        if (previousTask) {
-          setTasks(prev => prev.map(t => t.id === id ? { ...t, status: previousTask.status } : t));
-        } else {
-          fetchTasks();
-        }
-      }
-    } catch {
-      fetchTasks();
-    }
-  }, [fetchTasks, tasks]);
-
-  const handleSelect = useCallback((id) => {
-    setParams({ ...params, task: selectedId === id ? null : id });
-  }, [params, selectedId, setParams]);
-
-  const handleDependencyChange = useCallback(async (taskId, dependencyId, enabled) => {
-    setStatusError(null);
-    const previousTask = tasks.find(t => t.id === taskId);
-    if (!previousTask) return;
-
-    const nextDependsOnIds = enabled
-      ? [...new Set([...(previousTask.dependsOnIds ?? []), dependencyId])]
-      : (previousTask.dependsOnIds ?? []).filter(id => id !== dependencyId);
-
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, dependsOnIds: nextDependsOnIds } : t));
-
-    try {
-      const response = await fetch(`/api/pi-todo/tasks/${taskId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dependsOnIds: nextDependsOnIds }),
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        setStatusError(payload?.error ?? 'Dependency update failed');
-        setTasks(prev => prev.map(t => t.id === taskId ? previousTask : t));
-        return;
-      }
-      const updatedTask = await response.json().catch(() => null);
-      if (updatedTask?.id) {
-        setTasks(prev => prev.map(t => t.id === taskId ? updatedTask : t));
-      }
-    } catch {
-      setTasks(prev => prev.map(t => t.id === taskId ? previousTask : t));
-      setStatusError('Dependency update failed');
-    }
-  }, [tasks]);
-
-  const handleAddTag = useCallback(async (id, tag) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, tags: [...new Set([...t.tags, tag])] } : t));
-    try {
-      const response = await fetch(`/api/pi-todo/tasks/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ addTag: tag }),
-      });
-      if (response.ok) {
-        const updated = await response.json();
-        setTasks(prev => prev.map(t => t.id === id ? updated : t));
-      } else { fetchTasks(); }
-    } catch { fetchTasks(); }
-  }, [fetchTasks]);
-
-  const handleRemoveTag = useCallback(async (id, tag) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, tags: t.tags.filter(x => x !== tag) } : t));
-    try {
-      const response = await fetch(`/api/pi-todo/tasks/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ removeTag: tag }),
-      });
-      if (response.ok) {
-        const updated = await response.json();
-        setTasks(prev => prev.map(t => t.id === id ? updated : t));
-      } else { fetchTasks(); }
-    } catch { fetchTasks(); }
-  }, [fetchTasks]);
-
-  const allTags = [...new Set(tasks.filter(t => !t.parentId).flatMap(t => t.tags))].sort();
-  const visible = activeTag
-    ? (() => {
-        const parentIds = new Set(tasks.filter(t => !t.parentId && t.tags.includes(activeTag)).map(t => t.id));
-        return tasks.filter(t => t.tags.includes(activeTag) || (t.parentId && parentIds.has(t.parentId)));
-      })()
-    : tasks;
-  const columns = showDone ? COLUMNS : COLUMNS.filter(s => s !== 'done');
-
-  if (loading) {
-    return <div style={{ padding: 24, color: 'var(--fg3)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>loading…</div>;
-  }
+  if (loading) return <div style={{ padding: 24, color: 'var(--fg3)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>loading…</div>;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-
-      {statusError && (
-        <div style={{
-          padding: '10px 20px',
-          borderBottom: '1px solid color-mix(in srgb, var(--waiting) 35%, transparent)',
-          background: 'color-mix(in srgb, var(--waiting) 10%, transparent)',
-          color: 'var(--fg2)',
-          fontSize: '12px',
-          fontFamily: 'var(--font-mono)',
-        }}>
-          {statusError}
+      {error && (
+        <div style={{ padding: '10px 20px', borderBottom: '1px solid color-mix(in srgb, var(--waiting) 35%, transparent)', background: 'color-mix(in srgb, var(--waiting) 10%, transparent)', color: 'var(--fg2)', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+          {error}
         </div>
       )}
 
-      {/* filter bar */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '12px 20px', borderBottom: '1px solid var(--border)',
-        flexShrink: 0, flexWrap: 'wrap',
-      }}>
-        {[null, ...allTags].map(tag => (
-          <button key={tag ?? '__all'} onClick={() => setActiveTag(tag === activeTag ? null : tag)} style={{
-            fontFamily: 'var(--font-mono)', fontSize: '12px', cursor: 'pointer',
-            padding: '3px 10px', borderRadius: 'var(--radius)',
-            border:      activeTag === tag ? '1px solid var(--accent)' : '1px solid var(--border)',
-            background:  activeTag === tag ? 'color-mix(in srgb, var(--accent) 14%, transparent)' : 'transparent',
-            color:       activeTag === tag ? 'var(--accent)' : 'var(--fg2)',
-          }}>
-            {tag ? `#${tag}` : 'all'}
-          </button>
-        ))}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
+        <button onClick={() => setShowProjects(false)} style={{ ...buttonStyle, color: !showProjects ? 'var(--accent)' : 'var(--fg2)' }}>tasks</button>
+        <button onClick={() => setShowProjects(true)} style={{ ...buttonStyle, color: showProjects ? 'var(--accent)' : 'var(--fg2)' }}>projects</button>
+        <div style={{ width: 1, height: 18, background: 'var(--border)' }} />
+        {[null, ...state.projects.map(project => project.id)].map(projectId => {
+          const project = state.projects.find(candidate => candidate.id === projectId);
+          const active = activeProject === projectId || (!projectId && !activeProject);
+          return (
+            <button
+              key={projectId ?? '__all'}
+              onClick={() => setParams({ ...params, project: active ? null : (projectId ?? null) })}
+              style={{
+                fontFamily: 'var(--font-mono)', fontSize: 12, cursor: 'pointer', padding: '3px 10px', borderRadius: 'var(--radius)',
+                border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
+                background: active ? 'color-mix(in srgb, var(--accent) 14%, transparent)' : 'transparent',
+                color: active ? 'var(--accent)' : 'var(--fg2)',
+              }}
+            >
+              {project ? project.name : 'all'}
+            </button>
+          );
+        })}
         <div style={{ flex: 1 }} />
-        <button onClick={() => setShowDone(v => !v)} style={{
-          fontFamily: 'var(--font-mono)', fontSize: '11px', cursor: 'pointer',
-          padding: '3px 10px', borderRadius: 'var(--radius)',
-          border:     '1px solid var(--border)',
-          background:  showDone ? 'color-mix(in srgb, var(--idle) 12%, transparent)' : 'transparent',
-          color:       showDone ? 'var(--idle)' : 'var(--fg3)',
-        }}>
+        <button onClick={() => setParams({ ...params, done: showDone ? null : '1' })} style={{ ...buttonStyle, color: showDone ? 'var(--idle)' : 'var(--fg3)' }}>
           {showDone ? '● hide done' : '● show done'}
         </button>
       </div>
 
-      {/* board + panel */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: 0 }}>
-
-        {/* board */}
-        <div style={{
-          flex:                1,
-          minWidth:            0,
-          display:             'grid',
-          gridTemplateColumns: `repeat(${columns.length}, minmax(280px, 1fr))`,
-          gridAutoRows:        '1fr',
-          gap:                 16,
-          padding:             '16px 20px',
-          overflowX:           'auto',
-          overflowY:           'auto',
-          alignItems:          'stretch',
-          alignContent:        'start',
-        }}>
-          {columns.map(status => (
-            <Column
-              key={status} status={status}
-              tasks={visible.filter(t => t.status === status && !t.parentId)}
-              allTasks={tasks}
-              onStatusChange={handleStatusChange}
-              onSelect={handleSelect}
-              selectedId={selectedId}
-              draggingId={draggingId}
-              onDragStart={id => setDraggingId(id)}
-              onDragEnd={() => { setDraggingId(null); setDragOverStatus(null); }}
-              isDragOver={dragOverStatus === status}
-              onDragOver={e => { e.preventDefault(); setDragOverStatus(status); }}
-              onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverStatus(null); }}
-              onDrop={e => {
-                e.preventDefault();
-                const id = e.dataTransfer.getData('text/plain');
-                setDraggingId(null);
-                setDragOverStatus(null);
-                if (id) handleStatusChange(id, status);
-              }}
-            />
-          ))}
+        <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
+          {showProjects ? (
+            <ProjectManager projects={state.projects} tasks={state.tasks} refresh={refresh} />
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${COLUMNS.length}, minmax(260px, 1fr))`, gap: 16, alignItems: 'start' }}>
+              {COLUMNS.map(status => (
+                <Column
+                  key={status}
+                  status={status}
+                  tasks={parentTasks.filter(task => task.status === status)}
+                  allTasks={state.tasks}
+                  onSelect={taskId => setParams({ ...params, task: params.task === taskId ? null : taskId })}
+                  onStatusChange={onStatusChange}
+                  selectedId={selectedTaskId}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* detail panel */}
-        {renderedSelectedId && (
-          <div style={{
-            width:      panelOpen ? 'clamp(320px, 38vw, 760px)' : 0,
-            maxWidth:   '100%',
-            minWidth:   0,
-            overflow:   'hidden',
-            flexShrink: 0,
-            transition: 'width 180ms ease',
-          }}>
-            <DetailPanel
-              taskId={renderedSelectedId}
-              allTasks={tasks}
-              onStatusChange={handleStatusChange}
-              onDependencyChange={handleDependencyChange}
-              onAddTag={handleAddTag}
-              onRemoveTag={handleRemoveTag}
-              onClose={() => setSelectedId(null)}
-              isOpen={panelOpen}
-            />
-          </div>
+        {!showProjects && selectedTaskId && (
+          <DetailPanel
+            taskId={selectedTaskId}
+            state={state}
+            refresh={refresh}
+            onStatusChange={onStatusChange}
+            onClose={() => setParams({ ...params, task: null })}
+          />
         )}
       </div>
     </div>

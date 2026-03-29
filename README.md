@@ -1,8 +1,8 @@
 # lucy // pi-todo
 
-> Flat-file task manager for [pi](https://pi.dev/). Works as a pi extension (tool) and as a standalone CLI.
+> Flat-file task + project manager for [pi](https://pi.dev/). Works as a pi extension, standalone CLI, and pi-monitor plugin.
 
-Tasks are stored in a single JSON file. Supports parent/child relationships, dependencies between sibling tasks, tags, status tracking, and log entries.
+Tasks now belong to first-class **projects** instead of free-form tags. Projects can carry repo metadata such as local workspace paths and GitHub/git URLs, so each task can point to where the code lives.
 
 Built by [Lucy](https://github.com/JakubSzwajka/lucy).
 
@@ -25,22 +25,74 @@ Restart pi. The `pitodo` tool is now available in conversations.
 ### As a CLI
 
 ```bash
-# Add to your PATH, or:
 alias todo="$(pwd)/bin/todo"
 ```
 
+## Data model
+
+```ts
+Store {
+  projects: Project[]
+  tasks: Task[]
+}
+```
+
+### Projects
+- one project can own many tasks
+- stores repo metadata (`local`, `github`, or generic `git`)
+- one repo can be marked `primary`
+
+### Tasks
+- parent tasks can set `projectId`
+- subtasks inherit the parent project automatically
+- sibling dependencies are still supported via `dependsOnIds`
+
+Legacy tag-based stores are migrated on read:
+- parent task tags become projects
+- the first tag becomes the parent task project
+- subtasks inherit from parents
+- multiple legacy tags produce a migration note in the task log
+
 ## CLI usage
 
+### Projects
+
+```bash
+todo project add "SnapCap" --id snapcap \
+  --description "Captioning platform" \
+  --repos "local|workspace|/Users/kuba/DEV/sofomo/innocaption/snapcap/api|primary,github|origin|https://github.com/acme/snapcap-api"
+
+todo project list
+todo project show snapcap
+todo project update snapcap --name "SnapCap API"
+todo project delete old-project
 ```
-todo add "Fix login bug" --tags backend,auth
-todo add "Write tests" --parent <id> --depends-on <id1,id2>
+
+Repo entries use:
+
+```text
+kind|label|target|primary
+```
+
+Examples:
+- `local|workspace|/Users/kuba/DEV/priv/pi-todo|primary`
+- `github|origin|https://github.com/JakubSzwajka/pi-todo`
+- `git|mirror|git@github.com:org/repo.git`
+
+### Tasks
+
+```bash
+todo add "Replace tags with projects" --project pi-todo
+todo add "Update monitor plugin" --parent <parent-task-id>
+todo add "Write docs" --project pi-todo --depends-on <task-id>
+
 todo list
-todo list --tag backend
-todo list --status open
+todo list --project pi-todo
+todo list --status in_progress
 todo show <id>
-todo status <id> in_progress
-todo log <id> "Found the root cause"
-todo update <id> --title "New title" --tags new,tags
+todo status <id> review
+todo log <id> "Migrated the monitor UI to project filters"
+todo update <id> --project snapcap --description "..."
 todo delete <id>
 ```
 
@@ -48,29 +100,35 @@ Statuses: `open` → `in_progress` → `review` → `testing` → `done` / `wait
 
 ## Tool usage (in pi)
 
-The `pitodo` tool exposes the same actions: `add`, `list`, `get`, `status`, `log`, `update`, `delete`.
+The `pitodo` tool supports task actions:
+- `add`, `list`, `get`, `status`, `log`, `update`, `delete`
 
-## How it works
+And project actions:
+- `project_add`, `project_list`, `project_get`, `project_update`, `project_delete`
 
-| Feature | Detail |
-|---------|--------|
-| Flat file | All tasks live in `~/.pi/.pi-todo.json` (override with `PI_TODO_STORE` env var) |
-| Parent/child | Set `parentId` to group subtasks under a parent |
-| Tags | Only on parent tasks; children inherit their parent's tags automatically |
-| Dependencies | `dependsOnIds` between siblings; blocks status advancement until all dependencies are done |
-| Log | Append timestamped notes with an author name |
+Useful params:
+- `projectId` — assign/filter by project
+- `repos` — project repo metadata
+- `dependsOnIds` — sibling dependencies
 
 ## Monitor plugin
 
-This extension ships with a `monitor-plugin/` directory — a [pi-monitor](https://github.com/JakubSzwajka/pi-monitor) plugin that adds a kanban board, tag filtering, dependency editing, and task detail panels.
+This extension ships with a `monitor-plugin/` directory for [pi-monitor](https://github.com/JakubSzwajka/pi-monitor).
 
-If you have pi-monitor installed, it picks up the plugin automatically. No extra setup needed.
+The plugin now supports:
+- project-aware task filtering
+- project management and repo editing
+- project badges on cards
+- task detail panels showing inherited project + repo metadata
+- dependency editing for sibling tasks
+
+If you have pi-monitor installed, it picks up the plugin automatically.
 
 ## Config
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `PI_TODO_STORE` | `~/.pi/.pi-todo.json` | Path to the task store file |
+| `PI_TODO_STORE` | `~/.pi/.pi-todo.json` | Path to the store file |
 
 ## License
 

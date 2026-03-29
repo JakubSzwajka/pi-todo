@@ -3,13 +3,17 @@ import {
   writeStore,
   generateId,
   findTask,
+  findProject,
   validateDependsOnIds,
+  validateTaskProjectAssignment,
+  validateProject,
   getUnresolvedDependencies,
   statusRequiresResolvedDependencies,
+  getTaskProject,
+  getTaskProjectId,
+  normalizeProjectInput,
 } from './store.js';
-import type { Status, Author, Task } from './types.js';
-
-// ─── ANSI helpers ────────────────────────────────────────────────────────────
+import type { Status, Author, Task, ProjectRepo } from './types.js';
 
 const c = {
   reset:   '\x1b[0m',
@@ -52,92 +56,134 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
-function fmtTags(tags: string[]) {
-  if (!tags.length) return '';
-  return tags.map(t => `${c.magenta}#${t}${c.reset}`).join(' ');
+function fmtProject(id?: string, name?: string) {
+  if (!id) return '';
+  return `${c.magenta}@${name ?? id}${c.reset}`;
+}
+
+function fmtRepo(repo: ProjectRepo) {
+  const target = repo.path ?? repo.url ?? 'unknown';
+  const kind = `${c.gray}${repo.kind}${c.reset}`;
+  const primary = repo.primary ? ` ${c.yellow}[primary]${c.reset}` : '';
+  return `  - ${c.bold}${repo.label}${c.reset} ${kind}${primary}  ${target}`;
 }
 
 function fmtTask(t: Task, showFull = false, allTasks: Task[] = []) {
+  const store = readStore();
   const lines: string[] = [];
-
-  // ── header line ──────────────────────────────────────────────────────────
   const parent = t.parentId ? allTasks.find(p => p.id === t.parentId) : undefined;
   const dependencies = allTasks.filter(candidate => (t.dependsOnIds ?? []).includes(candidate.id));
   const blockedBy = allTasks.filter(candidate => (candidate.dependsOnIds ?? []).includes(t.id));
   const unresolved = dependencies.filter(candidate => candidate.status !== 'done');
-  const parentHint = parent ? `${c.gray}↳ #${parent.id} ${parent.title}${c.reset}  ` : '';
-  const tags = fmtTags(t.tags);
+  const project = getTaskProject(store, t);
+  const projectChip = fmtProject(project?.id, project?.name);
+
   lines.push(
     `${c.bold}${c.dim}#${t.id}${c.reset}  ${c.bold}${t.title}${c.reset}` +
     `  ${fmtStatus(t.status)}` +
-    (tags ? `  ${tags}` : '') +
+    (projectChip ? `  ${projectChip}` : '') +
     `  ${c.gray}${fmtDate(t.createdAt)}${c.reset}`
   );
 
-  if (showFull) {
-    // ── parent ref ───────────────────────────────────────────────────────
-    if (parentHint) lines.push(`  ${parentHint}`);
+  if (!showFull) return lines.join('\n');
 
-    // ── dependency refs ─────────────────────────────────────────────────
-    if (dependencies.length > 0) {
-      lines.push('');
-      lines.push(`  ${c.dim}Depends on:${c.reset}`);
-      for (const dependency of dependencies) {
-        const unresolvedMark = dependency.status === 'done' ? `${c.green}✓${c.reset}` : `${c.yellow}!${c.reset}`;
-        lines.push(`    ${unresolvedMark} ${c.dim}#${dependency.id}${c.reset}  ${dependency.title}  ${fmtStatus(dependency.status)}`);
-      }
-      if (unresolved.length > 0) {
-        lines.push(`  ${c.yellow}Blocked by ${unresolved.map(task => `#${task.id}`).join(', ')}${c.reset}`);
-      }
+  if (parent) lines.push(`  ${c.gray}↳ #${parent.id} ${parent.title}${c.reset}`);
+  if (project) {
+    lines.push('');
+    lines.push(`  ${c.dim}Project:${c.reset} ${project.name} ${c.gray}(${project.id})${c.reset}`);
+    if (project.description) lines.push(`  ${c.dim}${project.description}${c.reset}`);
+    if (project.repos.length > 0) {
+      lines.push(`  ${c.dim}Repos:${c.reset}`);
+      for (const repo of project.repos) lines.push(fmtRepo(repo));
     }
+  }
 
-    if (blockedBy.length > 0) {
-      lines.push('');
-      lines.push(`  ${c.dim}Blocking:${c.reset}`);
-      for (const dependent of blockedBy) {
-        lines.push(`    ${c.dim}#${dependent.id}${c.reset}  ${dependent.title}  ${fmtStatus(dependent.status)}`);
-      }
+  if (dependencies.length > 0) {
+    lines.push('');
+    lines.push(`  ${c.dim}Depends on:${c.reset}`);
+    for (const dependency of dependencies) {
+      const unresolvedMark = dependency.status === 'done' ? `${c.green}✓${c.reset}` : `${c.yellow}!${c.reset}`;
+      lines.push(`    ${unresolvedMark} ${c.dim}#${dependency.id}${c.reset}  ${dependency.title}  ${fmtStatus(dependency.status)}`);
     }
+    if (unresolved.length > 0) lines.push(`  ${c.yellow}Blocked by ${unresolved.map(task => `#${task.id}`).join(', ')}${c.reset}`);
+  }
 
-    // ── description ──────────────────────────────────────────────────────
-    if (t.description) {
-      lines.push('');
-      for (const line of t.description.split('\n')) {
-        lines.push(`  ${c.dim}${line}${c.reset}`);
-      }
+  if (blockedBy.length > 0) {
+    lines.push('');
+    lines.push(`  ${c.dim}Blocking:${c.reset}`);
+    for (const dependent of blockedBy) {
+      lines.push(`    ${c.dim}#${dependent.id}${c.reset}  ${dependent.title}  ${fmtStatus(dependent.status)}`);
     }
+  }
 
-    // ── log ──────────────────────────────────────────────────────────────
-    if (t.log.length > 0) {
-      lines.push('');
-      for (const e of t.log) {
-        const who = e.author === 'lucy' ? `${c.cyan}lucy${c.reset}` : `${c.green}${e.author}${c.reset}`;
-        lines.push(`  ${c.gray}${fmtDate(e.at)}${c.reset} ${who}  ${e.text}`);
-      }
+  if (t.description) {
+    lines.push('');
+    for (const line of t.description.split('\n')) lines.push(`  ${c.dim}${line}${c.reset}`);
+  }
+
+  if (t.log.length > 0) {
+    lines.push('');
+    for (const e of t.log) {
+      const who = e.author === 'pi' ? `${c.cyan}${e.author}${c.reset}` : `${c.green}${e.author}${c.reset}`;
+      lines.push(`  ${c.gray}${fmtDate(e.at)}${c.reset} ${who}  ${e.text}`);
     }
+  }
 
-    // ── subtasks ─────────────────────────────────────────────────────────
-    const children = allTasks.filter(c => c.parentId === t.id);
-    if (children.length > 0) {
-      lines.push('');
-      lines.push(`  ${c.dim}Subtasks:${c.reset}`);
-      for (const child of children) {
-        lines.push(`    ${c.dim}#${child.id}${c.reset}  ${child.title}  ${fmtStatus(child.status)}`);
-      }
+  const children = allTasks.filter(child => child.parentId === t.id);
+  if (children.length > 0) {
+    lines.push('');
+    lines.push(`  ${c.dim}Subtasks:${c.reset}`);
+    for (const child of children) {
+      const childProject = getTaskProject(store, child);
+      lines.push(`    ${c.dim}#${child.id}${c.reset}  ${child.title}  ${fmtStatus(child.status)}${childProject ? `  ${fmtProject(childProject.id, childProject.name)}` : ''}`);
     }
   }
 
   return lines.join('\n');
 }
 
-// ─── Commands ────────────────────────────────────────────────────────────────
+function fail(message: string): never {
+  console.error(`${c.red}${message}${c.reset}`);
+  process.exit(1);
+}
+
+function mustTask(id: string) {
+  const store = readStore();
+  const task = findTask(store, id);
+  if (!task) fail(`Task not found: ${id}`);
+  return { store, task };
+}
+
+function mustProject(id: string) {
+  const store = readStore();
+  const project = findProject(store, id);
+  if (!project) fail(`Project not found: ${id}`);
+  return { store, project };
+}
+
+function fmtProjectBlock(projectId: string) {
+  const { store, project } = mustProject(projectId);
+  const tasks = store.tasks.filter(task => getTaskProjectId(store, task) === project.id && !task.parentId);
+  const lines = [
+    `${c.bold}${project.name}${c.reset} ${c.gray}(${project.id})${c.reset}`,
+    project.description ? `${c.dim}${project.description}${c.reset}` : '',
+    '',
+    `${c.dim}Repos:${c.reset}`,
+    ...(project.repos.length > 0 ? project.repos.map(fmtRepo) : ['  - none']),
+    '',
+    `${c.dim}Parent tasks:${c.reset}`,
+    ...(tasks.length > 0 ? tasks.map(task => `  - #${task.id} ${task.title}  ${STATUS_LABEL[task.status]}`) : ['  - none']),
+  ].filter(Boolean);
+
+  return lines.join('\n');
+}
 
 export function cmdAdd(title: string, opts: {
   description?: string;
   note?: string;
   parentId?: string;
   dependsOnIds?: string[];
-  tags?: string[];
+  projectId?: string;
 }) {
   const store = readStore();
   const now = new Date().toISOString();
@@ -146,39 +192,36 @@ export function cmdAdd(title: string, opts: {
     title,
     description: opts.description,
     parentId: opts.parentId,
+    projectId: opts.parentId ? undefined : opts.projectId,
     dependsOnIds: [...new Set(opts.dependsOnIds ?? [])],
-    tags: opts.parentId ? [] : (opts.tags ?? []),
     status: 'open',
     createdAt: now,
     updatedAt: now,
     log: opts.note ? [{ at: now, author: 'kuba', text: opts.note }] : [],
   };
+
+  const assignmentError = validateTaskProjectAssignment(store, task);
+  if (assignmentError) fail(assignmentError);
+
   const dependencyError = validateDependsOnIds(store, task, task.dependsOnIds);
-  if (dependencyError) {
-    console.error(`${c.red}${dependencyError}${c.reset}`);
-    process.exit(1);
-  }
+  if (dependencyError) fail(dependencyError);
+
   store.tasks.push(task);
   writeStore(store);
   console.log(`${c.green}✓${c.reset} Added ${c.bold}#${task.id}${c.reset} — ${task.title}`);
   return task;
 }
 
-export function cmdList(opts: { status?: string; all?: boolean; tag?: string }) {
+export function cmdList(opts: { status?: string; all?: boolean; projectId?: string }) {
   const store = readStore();
   let tasks = store.tasks;
 
-  if (!opts.all && !opts.status) {
-    tasks = tasks.filter(t => t.status !== 'done' && t.status !== 'cancelled');
-  } else if (opts.status) {
-    tasks = tasks.filter(t => t.status === opts.status);
-  }
+  if (!opts.all && !opts.status) tasks = tasks.filter(t => t.status !== 'done' && t.status !== 'cancelled');
+  else if (opts.status) tasks = tasks.filter(t => t.status === opts.status);
 
-  if (opts.tag) {
-    const parentIds = new Set(
-      tasks.filter(t => !t.parentId && t.tags.includes(opts.tag!)).map(t => t.id)
-    );
-    tasks = tasks.filter(t => t.tags.includes(opts.tag!) || (t.parentId && parentIds.has(t.parentId)));
+  if (opts.projectId) {
+    const { project } = mustProject(opts.projectId);
+    tasks = tasks.filter(task => getTaskProjectId(store, task) === project.id);
   }
 
   if (tasks.length === 0) {
@@ -191,34 +234,18 @@ export function cmdList(opts: { status?: string; all?: boolean; tag?: string }) 
 }
 
 export function cmdShow(id: string) {
-  const store = readStore();
-  const task = findTask(store, id);
-  if (!task) {
-    console.error(`${c.red}Task not found: ${id}${c.reset}`);
-    process.exit(1);
-  }
+  const { store, task } = mustTask(id);
   console.log(fmtTask(task, true, store.tasks));
   return task;
 }
 
 export function cmdStatus(id: string, status: string) {
   const valid: Status[] = ['open', 'in_progress', 'review', 'testing', 'waiting', 'done', 'cancelled'];
-  if (!valid.includes(status as Status)) {
-    console.error(`${c.red}Invalid status. Use: ${valid.join(' | ')}${c.reset}`);
-    process.exit(1);
-  }
-  const store = readStore();
-  const task = findTask(store, id);
-  if (!task) {
-    console.error(`${c.red}Task not found: ${id}${c.reset}`);
-    process.exit(1);
-  }
+  if (!valid.includes(status as Status)) fail(`Invalid status. Use: ${valid.join(' | ')}`);
+  const { store, task } = mustTask(id);
   const nextStatus = status as Status;
   const unresolved = statusRequiresResolvedDependencies(nextStatus) ? getUnresolvedDependencies(store, task) : [];
-  if (unresolved.length > 0) {
-    console.error(`${c.red}Cannot move #${task.id} to ${nextStatus}; unresolved dependencies: ${unresolved.map(t => `#${t.id}`).join(', ')}${c.reset}`);
-    process.exit(1);
-  }
+  if (unresolved.length > 0) fail(`Cannot move #${task.id} to ${nextStatus}; unresolved dependencies: ${unresolved.map(t => `#${t.id}`).join(', ')}`);
   const prev = task.status;
   task.status = nextStatus;
   task.updatedAt = new Date().toISOString();
@@ -232,32 +259,30 @@ export function cmdUpdate(id: string, opts: {
   description?: string;
   parentId?: string;
   dependsOnIds?: string[];
-  tags?: string[];
+  projectId?: string;
 }) {
-  const store = readStore();
-  const task = findTask(store, id);
-  if (!task) {
-    console.error(`${c.red}Task not found: ${id}${c.reset}`);
-    process.exit(1);
-  }
+  const { store, task } = mustTask(id);
+
   const nextTask: Task = {
     ...task,
     title: opts.title ?? task.title,
     description: opts.description ?? task.description,
     parentId: opts.parentId ?? task.parentId,
+    projectId: (opts.parentId ?? task.parentId) ? undefined : (opts.projectId ?? task.projectId),
     dependsOnIds: opts.dependsOnIds ?? task.dependsOnIds ?? [],
-    tags: task.parentId ? [] : (opts.tags ?? task.tags),
   };
+
+  const assignmentError = validateTaskProjectAssignment(store, nextTask);
+  if (assignmentError) fail(assignmentError);
+
   const dependencyError = validateDependsOnIds(store, nextTask, nextTask.dependsOnIds);
-  if (dependencyError) {
-    console.error(`${c.red}${dependencyError}${c.reset}`);
-    process.exit(1);
-  }
+  if (dependencyError) fail(dependencyError);
+
   task.title = nextTask.title;
   task.description = nextTask.description;
   task.parentId = nextTask.parentId;
+  task.projectId = nextTask.projectId;
   task.dependsOnIds = nextTask.dependsOnIds;
-  task.tags = nextTask.tags;
   task.updatedAt = new Date().toISOString();
   writeStore(store);
   console.log(`${c.green}✓${c.reset} Updated #${task.id}`);
@@ -265,12 +290,7 @@ export function cmdUpdate(id: string, opts: {
 }
 
 export function cmdLog(id: string, text: string, author: Author = 'kuba') {
-  const store = readStore();
-  const task = findTask(store, id);
-  if (!task) {
-    console.error(`${c.red}Task not found: ${id}${c.reset}`);
-    process.exit(1);
-  }
+  const { store, task } = mustTask(id);
   const entry = { at: new Date().toISOString(), author, text };
   task.log.push(entry);
   task.updatedAt = entry.at;
@@ -282,12 +302,70 @@ export function cmdLog(id: string, text: string, author: Author = 'kuba') {
 export function cmdDelete(id: string) {
   const store = readStore();
   const idx = store.tasks.findIndex(t => t.id === id || t.id.startsWith(id));
-  if (idx === -1) {
-    console.error(`${c.red}Task not found: ${id}${c.reset}`);
-    process.exit(1);
-  }
+  if (idx === -1) fail(`Task not found: ${id}`);
   const [removed] = store.tasks.splice(idx, 1);
   writeStore(store);
   console.log(`${c.green}✓${c.reset} Deleted #${removed.id} — ${removed.title}`);
   return removed;
+}
+
+export function cmdProjectAdd(opts: { id?: string; name: string; description?: string; repos?: ProjectRepo[] }) {
+  const store = readStore();
+  const project = normalizeProjectInput(opts);
+  const error = validateProject(store, project);
+  if (error) fail(error);
+  store.projects.push(project);
+  writeStore(store);
+  console.log(`${c.green}✓${c.reset} Added project ${c.bold}${project.name}${c.reset} (${project.id})`);
+  return project;
+}
+
+export function cmdProjectList() {
+  const store = readStore();
+  if (store.projects.length === 0) {
+    console.log(`${c.gray}No projects.${c.reset}`);
+    return [];
+  }
+  for (const project of store.projects) {
+    const taskCount = store.tasks.filter(task => getTaskProjectId(store, task) === project.id && !task.parentId).length;
+    console.log(`${c.bold}${project.name}${c.reset} ${c.gray}(${project.id})${c.reset}  ${c.magenta}${taskCount} tasks${c.reset}`);
+  }
+  return store.projects;
+}
+
+export function cmdProjectShow(id: string) {
+  console.log(fmtProjectBlock(id));
+}
+
+export function cmdProjectUpdate(id: string, opts: { name?: string; description?: string; repos?: ProjectRepo[]; nextId?: string }) {
+  const { store, project: existing } = mustProject(id);
+  const next = normalizeProjectInput({ id: opts.nextId ?? existing.id, name: opts.name, description: opts.description, repos: opts.repos }, existing);
+  const error = validateProject(store, next, existing.id);
+  if (error) fail(error);
+
+  const previousId = existing.id;
+  existing.id = next.id;
+  existing.name = next.name;
+  existing.description = next.description;
+  existing.repos = next.repos;
+  existing.updatedAt = next.updatedAt;
+
+  if (previousId !== existing.id) {
+    for (const task of store.tasks) {
+      if (task.projectId === previousId) task.projectId = existing.id;
+    }
+  }
+
+  writeStore(store);
+  console.log(`${c.green}✓${c.reset} Updated project ${c.bold}${existing.name}${c.reset} (${existing.id})`);
+  return existing;
+}
+
+export function cmdProjectDelete(id: string) {
+  const { store, project } = mustProject(id);
+  const inUse = store.tasks.some(task => getTaskProjectId(store, task) === project.id);
+  if (inUse) fail(`Cannot delete project ${project.id}; tasks still reference it`);
+  store.projects = store.projects.filter(candidate => candidate.id !== project.id);
+  writeStore(store);
+  console.log(`${c.green}✓${c.reset} Deleted project ${project.id}`);
 }
