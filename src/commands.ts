@@ -68,6 +68,11 @@ function fmtRepo(repo: ProjectRepo) {
   return `  - ${c.bold}${repo.label}${c.reset} ${kind}${primary}  ${target}`;
 }
 
+function fmtTags(tags: string[]) {
+  if (!tags.length) return '';
+  return tags.map(tag => `${c.cyan}#${tag}${c.reset}`).join(' ');
+}
+
 function fmtTask(t: Task, showFull = false, allTasks: Task[] = []) {
   const store = readStore();
   const lines: string[] = [];
@@ -77,11 +82,13 @@ function fmtTask(t: Task, showFull = false, allTasks: Task[] = []) {
   const unresolved = dependencies.filter(candidate => candidate.status !== 'done');
   const project = getTaskProject(store, t);
   const projectChip = fmtProject(project?.id, project?.name);
+  const tagsChip = fmtTags(t.tags);
 
   lines.push(
     `${c.bold}${c.dim}#${t.id}${c.reset}  ${c.bold}${t.title}${c.reset}` +
     `  ${fmtStatus(t.status)}` +
     (projectChip ? `  ${projectChip}` : '') +
+    (tagsChip ? `  ${tagsChip}` : '') +
     `  ${c.gray}${fmtDate(t.createdAt)}${c.reset}`
   );
 
@@ -96,6 +103,10 @@ function fmtTask(t: Task, showFull = false, allTasks: Task[] = []) {
       lines.push(`  ${c.dim}Repos:${c.reset}`);
       for (const repo of project.repos) lines.push(fmtRepo(repo));
     }
+  }
+  if (t.tags.length > 0) {
+    lines.push('');
+    lines.push(`  ${c.dim}Tags:${c.reset} ${fmtTags(t.tags)}`);
   }
 
   if (dependencies.length > 0) {
@@ -184,6 +195,7 @@ export function cmdAdd(title: string, opts: {
   parentId?: string;
   dependsOnIds?: string[];
   projectId?: string;
+  tags?: string[];
 }) {
   const store = readStore();
   const now = new Date().toISOString();
@@ -193,6 +205,7 @@ export function cmdAdd(title: string, opts: {
     description: opts.description,
     parentId: opts.parentId,
     projectId: opts.parentId ? undefined : opts.projectId,
+    tags: [...new Set(opts.tags ?? [])],
     dependsOnIds: [...new Set(opts.dependsOnIds ?? [])],
     status: 'open',
     createdAt: now,
@@ -212,7 +225,7 @@ export function cmdAdd(title: string, opts: {
   return task;
 }
 
-export function cmdList(opts: { status?: string; all?: boolean; projectId?: string }) {
+export function cmdList(opts: { status?: string; all?: boolean; projectId?: string; tag?: string }) {
   const store = readStore();
   let tasks = store.tasks;
 
@@ -222,6 +235,9 @@ export function cmdList(opts: { status?: string; all?: boolean; projectId?: stri
   if (opts.projectId) {
     const { project } = mustProject(opts.projectId);
     tasks = tasks.filter(task => getTaskProjectId(store, task) === project.id);
+  }
+  if (opts.tag) {
+    tasks = tasks.filter(task => task.tags.includes(opts.tag!));
   }
 
   if (tasks.length === 0) {
@@ -260,6 +276,7 @@ export function cmdUpdate(id: string, opts: {
   parentId?: string;
   dependsOnIds?: string[];
   projectId?: string;
+  tags?: string[];
 }) {
   const { store, task } = mustTask(id);
 
@@ -269,6 +286,7 @@ export function cmdUpdate(id: string, opts: {
     description: opts.description ?? task.description,
     parentId: opts.parentId ?? task.parentId,
     projectId: (opts.parentId ?? task.parentId) ? undefined : (opts.projectId ?? task.projectId),
+    tags: opts.tags ?? task.tags,
     dependsOnIds: opts.dependsOnIds ?? task.dependsOnIds ?? [],
   };
 
@@ -282,6 +300,7 @@ export function cmdUpdate(id: string, opts: {
   task.description = nextTask.description;
   task.parentId = nextTask.parentId;
   task.projectId = nextTask.projectId;
+  task.tags = nextTask.tags;
   task.dependsOnIds = nextTask.dependsOnIds;
   task.updatedAt = new Date().toISOString();
   writeStore(store);

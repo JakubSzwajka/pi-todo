@@ -33,6 +33,7 @@ export interface Task {
   description?: string;
   parentId?: string;
   projectId?: string;
+  tags: string[];
   dependsOnIds?: string[];
   status: Status;
   createdAt: string;

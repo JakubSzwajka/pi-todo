@@ -75,6 +75,7 @@ export default function (pi: ExtensionAPI) {
 
       filterStatus: Type.Optional(StatusEnum()),
       filterProject: Type.Optional(Type.String({ description: 'Filter tasks by project id' })),
+      filterTag: Type.Optional(Type.String({ description: 'Filter tasks by tag' })),
       all: Type.Optional(Type.Boolean({ description: 'Include done and cancelled tasks' })),
 
       id: Type.Optional(Type.String({ description: 'Task ID (or unique prefix)' })),
@@ -82,6 +83,7 @@ export default function (pi: ExtensionAPI) {
       description: Type.Optional(Type.String({ description: 'Task body / PRD content' })),
       parentId: Type.Optional(Type.String({ description: 'Parent task ID for subtasks' })),
       projectId: Type.Optional(Type.String({ description: 'Project id for task assignment or project CRUD' })),
+      tags: Type.Optional(Type.Array(Type.String(), { description: 'Secondary task tags' })),
       dependsOnIds: Type.Optional(Type.Array(Type.String(), { description: 'Task IDs this task depends on; all must be done before advancing' })),
 
       name: Type.Optional(Type.String({ description: 'Project display name' })),
@@ -105,6 +107,9 @@ export default function (pi: ExtensionAPI) {
           const project = findProject(store, params.filterProject);
           if (!project) throw new Error(`Project not found: ${params.filterProject}`);
           tasks = tasks.filter(task => getTaskProjectId(store, task) === project.id);
+        }
+        if (params.filterTag) {
+          tasks = tasks.filter(task => task.tags.includes(params.filterTag!));
         }
         const enriched = tasks.map(task => ({ ...task, project: getTaskProject(store, task) }));
         return {
@@ -140,6 +145,7 @@ export default function (pi: ExtensionAPI) {
           description: params.description,
           parentId: params.parentId,
           projectId: params.parentId ? undefined : params.projectId,
+          tags: [...new Set(params.tags ?? [])],
           dependsOnIds: [...new Set(params.dependsOnIds ?? [])],
           status: 'open',
           createdAt: at,
@@ -203,6 +209,7 @@ export default function (pi: ExtensionAPI) {
           description: params.description ?? task.description,
           parentId: params.parentId ?? task.parentId,
           projectId: (params.parentId ?? task.parentId) ? undefined : (params.projectId ?? task.projectId),
+          tags: params.tags ?? task.tags,
           dependsOnIds: params.dependsOnIds ?? task.dependsOnIds ?? [],
         };
         const assignmentError = validateTaskProjectAssignment(store, nextTask);
@@ -213,6 +220,7 @@ export default function (pi: ExtensionAPI) {
         task.description = nextTask.description;
         task.parentId = nextTask.parentId;
         task.projectId = nextTask.projectId;
+        task.tags = nextTask.tags;
         task.dependsOnIds = nextTask.dependsOnIds;
         task.updatedAt = now();
         writeStore(store);

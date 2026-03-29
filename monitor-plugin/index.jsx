@@ -177,6 +177,40 @@ function ProjectSelect({ value, projects, inherited, disabled, onChange }) {
   );
 }
 
+function TagEditor({ tags, onAddTag, onRemoveTag }) {
+  const [value, setValue] = useState('');
+  const add = useCallback(() => {
+    const tag = value.trim();
+    if (!tag) return;
+    onAddTag(tag);
+    setValue('');
+  }, [onAddTag, value]);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        {tags.map(tag => (
+          <span key={tag} style={{ ...chip('var(--accent)'), display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            #{tag}
+            <button onClick={() => onRemoveTag(tag)} style={{ border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', padding: 0, lineHeight: 1 }}>×</button>
+          </span>
+        ))}
+        {tags.length === 0 && <span style={{ fontSize: 12, color: 'var(--fg3)' }}>No tags yet.</span>}
+      </div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') add(); }}
+          placeholder="add tag"
+          style={{ ...inputStyle, minWidth: 140, flex: 1 }}
+        />
+        <button onClick={add} style={buttonStyle}>add tag</button>
+      </div>
+    </div>
+  );
+}
+
 function RepoList({ project }) {
   if (!project?.repos?.length) return <div style={{ fontSize: 12, color: 'var(--fg3)' }}>No repos attached.</div>;
   return (
@@ -311,6 +345,7 @@ function TaskCard({ task, allTasks, onSelect, onStatusChange, selectedId }) {
       <div style={{ fontSize: 13, color: selectedId === task.id ? 'var(--accent)' : 'var(--fg)', fontWeight: 500 }}>{task.title}</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
         {task.project && <span style={chip('var(--accent)')}>{task.project.name}</span>}
+        {(task.tags ?? []).map(tag => <span key={tag} style={chip('var(--busy)')}>#{tag}</span>)}
         {unresolvedTaskDeps.length > 0 && <span style={chip('var(--waiting)')}>blocked by {unresolvedTaskDeps.length}</span>}
         {subtasks.length > 0 && <span style={chip('var(--fg3)')}>{subtasks.filter(child => child.status === 'done').length}/{subtasks.length} subtasks</span>}
       </div>
@@ -357,6 +392,9 @@ function DetailPanel({ taskId, state, refresh, onClose, onStatusChange }) {
     if (response.ok) refresh();
   }, [refresh, task.id]);
 
+  const addTag = useCallback((tag) => updateTask({ addTag: tag }), [updateTask]);
+  const removeTag = useCallback((tag) => updateTask({ removeTag: tag }), [updateTask]);
+
   const onDependencyChange = useCallback(async (taskId, dependencyId, enabled) => {
     const current = tasks.find(candidate => candidate.id === taskId);
     if (!current) return;
@@ -392,6 +430,11 @@ function DetailPanel({ taskId, state, refresh, onClose, onStatusChange }) {
             <ProjectSelect value={assignedProject?.id ?? ''} projects={projects} inherited disabled onChange={() => {}} />
           )}
         </div>
+
+        <section style={sectionStyle}>
+          <SectionTitle>tags</SectionTitle>
+          <TagEditor tags={task.tags ?? []} onAddTag={addTag} onRemoveTag={removeTag} />
+        </section>
 
         {assignedProject && (
           <section style={sectionStyle}>

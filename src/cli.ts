@@ -66,13 +66,13 @@ const HELP = `
 Usage: todo <command> [options]
 
 Task commands:
-  add <title> [--description <text>] [--project <project-id>]
+  add <title> [--description <text>] [--project <project-id>] [--tags <tag1,tag2>]
               [--parent <id>] [--depends-on <id1,id2>] [--note <text>]
-  list [--status <status>] [--project <project-id>] [--all]
+  list [--status <status>] [--project <project-id>] [--tag <tag>] [--all]
   show <id>
   status <id> <status>
   update <id> [--title <text>] [--description <text>]
-              [--project <project-id>] [--parent <id>] [--depends-on <id1,id2>]
+              [--project <project-id>] [--tags <tag1,tag2>] [--parent <id>] [--depends-on <id1,id2>]
   log <id> <note text>
   delete <id>
 
@@ -146,6 +146,7 @@ switch (cmd) {
       parentId: flags['parent'] as string | undefined,
       dependsOnIds: flags['depends-on'] ? parseCsv(flags['depends-on'] as string) : undefined,
       projectId: flags['project'] as string | undefined,
+      tags: flags['tags'] ? parseCsv(flags['tags'] as string) : undefined,
     });
     break;
   }
@@ -153,6 +154,7 @@ switch (cmd) {
     cmdList({
       status: flags['status'] as string | undefined,
       projectId: flags['project'] as string | undefined,
+      tag: flags['tag'] as string | undefined,
       all: flags['all'] === true,
     });
     break;
@@ -175,6 +177,7 @@ switch (cmd) {
       parentId: flags['parent'] as string | undefined,
       dependsOnIds: flags['depends-on'] ? parseCsv(flags['depends-on'] as string) : undefined,
       projectId: flags['project'] as string | undefined,
+      tags: flags['tags'] ? parseCsv(flags['tags'] as string) : undefined,
     });
     break;
   }

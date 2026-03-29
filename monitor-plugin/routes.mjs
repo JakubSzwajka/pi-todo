@@ -78,6 +78,7 @@ function sanitizeTask(task, projects = []) {
     description: typeof task.description === 'string' ? task.description : undefined,
     parentId: typeof task.parentId === 'string' ? task.parentId : undefined,
     projectId: task.parentId ? undefined : projectId,
+    tags: [...new Set(legacyTags.map(tag => tag.trim()))],
     dependsOnIds: Array.isArray(task.dependsOnIds) ? [...new Set(task.dependsOnIds.filter(id => typeof id === 'string'))] : [],
     status: ['open', 'in_progress', 'review', 'testing', 'waiting', 'done', 'cancelled'].includes(task.status) ? task.status : 'open',
     createdAt: typeof task.createdAt === 'string' ? task.createdAt : new Date().toISOString(),
@@ -286,6 +287,25 @@ export default async function routes(req, res, url, { sendJson, readBody }) {
       } else {
         task.projectId = undefined;
       }
+      task.updatedAt = new Date().toISOString();
+    }
+
+    if (body.tags !== undefined) {
+      task.tags = Array.isArray(body.tags)
+        ? [...new Set(body.tags.map(tag => String(tag).trim()).filter(Boolean))]
+        : [];
+      task.updatedAt = new Date().toISOString();
+    }
+
+    if (body.addTag !== undefined) {
+      const tag = String(body.addTag).trim();
+      if (tag && !task.tags.includes(tag)) task.tags = [...task.tags, tag];
+      task.updatedAt = new Date().toISOString();
+    }
+
+    if (body.removeTag !== undefined) {
+      const tag = String(body.removeTag).trim();
+      task.tags = task.tags.filter(existing => existing !== tag);
       task.updatedAt = new Date().toISOString();
     }
 

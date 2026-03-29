@@ -130,6 +130,9 @@ function normalizeTask(value: unknown): Task | null {
     description: typeof raw.description === 'string' ? raw.description : undefined,
     parentId: typeof raw.parentId === 'string' ? raw.parentId : undefined,
     projectId: typeof raw.projectId === 'string' && raw.projectId.trim() ? slugify(raw.projectId) : undefined,
+    tags: Array.isArray(raw.tags)
+      ? [...new Set(raw.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0).map(tag => tag.trim()))]
+      : [],
     dependsOnIds: Array.isArray(raw.dependsOnIds)
       ? [...new Set(raw.dependsOnIds.filter((id): id is string => typeof id === 'string'))]
       : [],
@@ -167,9 +170,7 @@ function migrateLegacyTasks(rawTasks: Array<Record<string, unknown>>, projects: 
       const task = normalizeTask(raw);
       if (!task) return null;
 
-      const tags = Array.isArray(raw.tags)
-        ? [...new Set(raw.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0).map(tag => tag.trim()))]
-        : [];
+      const tags = task.tags;
 
       if (!task.projectId && !task.parentId && tags.length > 0) {
         const primaryTag = tags[0]!;

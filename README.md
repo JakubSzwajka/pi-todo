@@ -2,7 +2,7 @@
 
 > Flat-file task + project manager for [pi](https://pi.dev/). Works as a pi extension, standalone CLI, and pi-monitor plugin.
 
-Tasks now belong to first-class **projects** instead of free-form tags. Projects can carry repo metadata such as local workspace paths and GitHub/git URLs, so each task can point to where the code lives.
+Tasks now belong to first-class **projects**, and can also carry lightweight **tags** as secondary labels. Projects carry durable repo metadata such as local workspace paths, while tags stay optional and free-form.
 
 Built by [Lucy](https://github.com/JakubSzwajka/lucy).
 
@@ -44,14 +44,15 @@ Store {
 
 ### Tasks
 - parent tasks can set `projectId`
+- tasks can also carry optional `tags: string[]`
 - subtasks inherit the parent project automatically
 - sibling dependencies are still supported via `dependsOnIds`
 
 Legacy tag-based stores are migrated on read:
-- parent task tags become projects
-- the first tag becomes the parent task project
-- subtasks inherit from parents
-- multiple legacy tags produce a migration note in the task log
+- parent task tags can seed projects during migration
+- the first legacy tag becomes the parent task project when no project is already set
+- tags themselves are preserved on tasks
+- subtasks inherit projects from parents
 
 ## CLI usage
 
@@ -82,17 +83,18 @@ Examples:
 ### Tasks
 
 ```bash
-todo add "Replace tags with projects" --project pi-todo
-todo add "Update monitor plugin" --parent <parent-task-id>
-todo add "Write docs" --project pi-todo --depends-on <task-id>
+todo add "Replace tags with projects" --project pi-todo --tags migration,ux
+todo add "Update monitor plugin" --parent <parent-task-id> --tags ui
+todo add "Write docs" --project pi-todo --depends-on <task-id> --tags docs
 
 todo list
 todo list --project pi-todo
+todo list --tag docs
 todo list --status in_progress
 todo show <id>
 todo status <id> review
 todo log <id> "Migrated the monitor UI to project filters"
-todo update <id> --project snapcap --description "..."
+todo update <id> --project snapcap --tags backend,urgent --description "..."
 todo delete <id>
 ```
 
@@ -108,6 +110,7 @@ And project actions:
 
 Useful params:
 - `projectId` — assign/filter by project
+- `tags` / `filterTag` — optional secondary labels on tasks
 - `repos` — project repo metadata
 - `dependsOnIds` — sibling dependencies
 
@@ -117,6 +120,7 @@ This extension ships with a `monitor-plugin/` directory for [pi-monitor](https:/
 
 The plugin now supports:
 - project-aware task filtering
+- optional task tags with inline editing in the detail panel
 - project management and repo editing
 - project badges on cards
 - task detail panels showing inherited project + repo metadata
