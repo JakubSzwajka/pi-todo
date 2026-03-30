@@ -236,6 +236,138 @@ function RepoList({ project }) {
   );
 }
 
+function CreateTaskForm({ projects, tasks, activeProject, onCreated, onCancel }) {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [projectId, setProjectId] = useState(activeProject ?? '');
+  const [parentId, setParentId] = useState('');
+  const [tagsText, setTagsText] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState(null);
+
+  const activeTasks = useMemo(() => tasks.filter(t => t.status !== 'done' && t.status !== 'cancelled' && !t.parentId), [tasks]);
+
+  const submit = useCallback(async () => {
+    if (!title.trim()) { setFormError('Title is required'); return; }
+    setSaving(true);
+    setFormError(null);
+    const tags = tagsText.split(',').map(t => t.trim()).filter(Boolean);
+    const payload = {
+      title: title.trim(),
+      description: description.trim() || undefined,
+      projectId: parentId ? undefined : (projectId || undefined),
+      parentId: parentId || undefined,
+      tags,
+    };
+    try {
+      const response = await fetch('/api/pi-todo/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        setFormError(data?.error ?? 'Failed to create task');
+        setSaving(false);
+        return;
+      }
+      const created = await response.json();
+      onCreated(created);
+    } catch {
+      setFormError('Network error');
+      setSaving(false);
+    }
+  }, [title, description, projectId, parentId, tagsText, onCreated]);
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 100,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(0,0,0,0.6)',
+    }} onClick={onCancel}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: 'clamp(360px, 50vw, 520px)', background: 'var(--bg2)',
+        border: '1px solid var(--border2)', borderRadius: 'var(--radius)',
+        padding: 20, display: 'flex', flexDirection: 'column', gap: 12,
+      }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--fg)', fontWeight: 600 }}>new task</div>
+
+        {formError && (
+          <div style={{ fontSize: 12, color: 'hsl(0,70%,60%)', fontFamily: 'var(--font-mono)', padding: '6px 10px', background: 'color-mix(in srgb, hsl(0,70%,60%) 10%, transparent)', borderRadius: 6, border: '1px solid color-mix(in srgb, hsl(0,70%,60%) 28%, transparent)' }}>
+            {formError}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={formLabelStyle}>title *</label>
+          <input
+            value={title} onChange={e => setTitle(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) submit(); if (e.key === 'Escape') onCancel(); }}
+            placeholder="Task title"
+            autoFocus
+            style={inputStyle}
+          />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={formLabelStyle}>description</label>
+          <textarea
+            value={description} onChange={e => setDescription(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Escape') onCancel(); }}
+            placeholder="Optional description"
+            rows={3}
+            style={{ ...inputStyle, minHeight: 60, resize: 'vertical' }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: 12 }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label style={formLabelStyle}>project</label>
+            <select
+              value={parentId ? '' : projectId}
+              disabled={!!parentId}
+              onChange={e => setProjectId(e.target.value)}
+              style={{ ...inputStyle, padding: '6px 8px' }}
+            >
+              <option value="">no project</option>
+              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label style={formLabelStyle}>parent task</label>
+            <select
+              value={parentId}
+              onChange={e => setParentId(e.target.value)}
+              style={{ ...inputStyle, padding: '6px 8px' }}
+            >
+              <option value="">none (top-level)</option>
+              {activeTasks.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={formLabelStyle}>tags (comma-separated)</label>
+          <input
+            value={tagsText} onChange={e => setTagsText(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }}
+            placeholder="e.g. bug, urgent"
+            style={inputStyle}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 4 }}>
+          <button onClick={onCancel} style={buttonStyle}>cancel</button>
+          <button onClick={submit} disabled={saving} style={{ ...buttonStyle, color: 'var(--accent)', borderColor: 'var(--accent)' }}>
+            {saving ? 'creating…' : 'create task'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProjectManager({ projects, tasks, refresh }) {
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState({ id: '', name: '', description: '', reposText: '' });
@@ -333,15 +465,21 @@ function ProjectManager({ projects, tasks, refresh }) {
   );
 }
 
-function TaskCard({ task, allTasks, onSelect, onStatusChange, selectedId }) {
+function TaskCard({ task, allTasks, onSelect, onStatusChange, selectedId, draggingId, onDragStart, onDragEnd }) {
   const subtasks = allTasks.filter(candidate => candidate.parentId === task.id);
   const unresolvedTaskDeps = getUnresolvedDependencies(task, allTasks);
+  const isDragging = draggingId === task.id;
   return (
-    <div onClick={() => onSelect(task.id)} style={{
-      display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', cursor: 'pointer',
-      borderRadius: 'var(--radius)', border: `1px solid ${selectedId === task.id ? 'var(--accent)' : 'var(--border)'}`,
-      background: 'var(--surface)',
-    }}>
+    <div
+      draggable
+      onDragStart={e => { e.dataTransfer.setData('text/plain', task.id); e.dataTransfer.effectAllowed = 'move'; onDragStart(task.id); }}
+      onDragEnd={onDragEnd}
+      onClick={() => onSelect(task.id)}
+      style={{
+        display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', cursor: 'grab',
+        borderRadius: 'var(--radius)', border: `1px solid ${selectedId === task.id ? 'var(--accent)' : 'var(--border)'}`,
+        background: 'var(--surface)', opacity: isDragging ? 0.4 : 1, transition: 'opacity 120ms',
+      }}>
       <div style={{ fontSize: 13, color: selectedId === task.id ? 'var(--accent)' : 'var(--fg)', fontWeight: 500 }}>{task.title}</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
         {task.project && <span style={chip('var(--accent)')}>{task.project.name}</span>}
@@ -358,22 +496,51 @@ function TaskCard({ task, allTasks, onSelect, onStatusChange, selectedId }) {
   );
 }
 
-function Column({ status, tasks, allTasks, onSelect, onStatusChange, selectedId }) {
+function Column({ status, tasks, allTasks, onSelect, onStatusChange, selectedId, draggingId, onDragStart, onDragEnd, isDragOver, onDragOver, onDragLeave, onDrop }) {
   const meta = STATUS_META[status];
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 8, borderBottom: `2px solid color-mix(in srgb, ${meta.color} 35%, transparent)` }}>
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      style={{
+        display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0,
+        outline: isDragOver ? `2px dashed color-mix(in srgb, ${meta.color} 60%, transparent)` : '2px dashed transparent',
+        borderRadius: 'var(--radius)', padding: 4, transition: 'outline-color 120ms',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 8, borderBottom: `2px solid color-mix(in srgb, ${meta.color} ${isDragOver ? 80 : 35}%, transparent)` }}>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: meta.color, fontWeight: 600 }}>{meta.label}</span>
         <span style={{ ...chip('var(--fg3)'), background: 'var(--surface)' }}>{tasks.length}</span>
       </div>
-      {tasks.length === 0 ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--fg3)' }}>—</div> : tasks.map(task => (
-        <TaskCard key={task.id} task={task} allTasks={allTasks} onSelect={onSelect} onStatusChange={onStatusChange} selectedId={selectedId} />
-      ))}
+      {tasks.length === 0 ? (
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: isDragOver ? meta.color : 'var(--fg3)', minHeight: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {isDragOver ? '⊕ drop here' : '—'}
+        </div>
+      ) : (
+        <>
+          {tasks.map(task => (
+            <TaskCard key={task.id} task={task} allTasks={allTasks} onSelect={onSelect} onStatusChange={onStatusChange} selectedId={selectedId}
+              draggingId={draggingId} onDragStart={onDragStart} onDragEnd={onDragEnd}
+            />
+          ))}
+          {isDragOver && (
+            <div style={{
+              fontFamily: 'var(--font-mono)', fontSize: 11, color: meta.color, textAlign: 'center',
+              padding: '8px 0', borderRadius: 'var(--radius)',
+              border: `1px dashed color-mix(in srgb, ${meta.color} 50%, transparent)`,
+              background: `color-mix(in srgb, ${meta.color} 6%, transparent)`,
+            }}>
+              ⊕ drop here
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
 
-function DetailPanel({ taskId, state, refresh, onClose, onStatusChange }) {
+function DetailPanel({ taskId, state, refresh, onClose, onStatusChange, onDeleted }) {
   const { tasks, projects } = state;
   const task = tasks.find(candidate => candidate.id === taskId);
   if (!task) return null;
@@ -418,6 +585,11 @@ function DetailPanel({ taskId, state, refresh, onClose, onStatusChange }) {
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg3)' }}>#{task.id}</span>
         <div style={{ flex: 1 }} />
         <CopyButton text={`task #${task.id}`} />
+        <button onClick={async () => {
+          if (!confirm(`Delete task "${task.title}"?`)) return;
+          const res = await fetch(`/api/pi-todo/tasks/${task.id}`, { method: 'DELETE' });
+          if (res.ok) { onDeleted(); }
+        }} style={{ background: 'transparent', border: 'none', color: 'hsl(0,60%,55%)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11 }}>delete</button>
         <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--fg3)', cursor: 'pointer' }}>✕</button>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -520,6 +692,14 @@ function DetailPanel({ taskId, state, refresh, onClose, onStatusChange }) {
   );
 }
 
+const formLabelStyle = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 10,
+  color: 'var(--fg3)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.06em',
+};
+
 const inputStyle = {
   width: '100%',
   fontFamily: 'var(--font-mono)',
@@ -577,6 +757,9 @@ export default function TasksPage({ params, setParams }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showProjects, setShowProjects] = useState(params.view === 'projects');
+  const [creating, setCreating] = useState(false);
+  const [draggingId, setDraggingId] = useState(null);
+  const [dragOverStatus, setDragOverStatus] = useState(null);
 
   const selectedTaskId = params.task ?? null;
   const activeProject = params.project ?? null;
@@ -624,10 +807,24 @@ export default function TasksPage({ params, setParams }) {
     refresh();
   }, [refresh]);
 
+  const onTaskCreated = useCallback((task) => {
+    setCreating(false);
+    refresh(task.id);
+  }, [refresh]);
+
   if (loading) return <div style={{ padding: 24, color: 'var(--fg3)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>loading…</div>;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      {creating && (
+        <CreateTaskForm
+          projects={state.projects}
+          tasks={state.tasks}
+          activeProject={activeProject}
+          onCreated={onTaskCreated}
+          onCancel={() => setCreating(false)}
+        />
+      )}
       {error && (
         <div style={{ padding: '10px 20px', borderBottom: '1px solid color-mix(in srgb, var(--waiting) 35%, transparent)', background: 'color-mix(in srgb, var(--waiting) 10%, transparent)', color: 'var(--fg2)', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
           {error}
@@ -637,6 +834,7 @@ export default function TasksPage({ params, setParams }) {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
         <button onClick={() => setShowProjects(false)} style={{ ...buttonStyle, color: !showProjects ? 'var(--accent)' : 'var(--fg2)' }}>tasks</button>
         <button onClick={() => setShowProjects(true)} style={{ ...buttonStyle, color: showProjects ? 'var(--accent)' : 'var(--fg2)' }}>projects</button>
+        <button onClick={() => setCreating(true)} style={{ ...buttonStyle, color: 'var(--accent)', borderColor: 'var(--accent)' }}>+ new task</button>
         <div style={{ width: 1, height: 18, background: 'var(--border)' }} />
         {[null, ...state.projects.map(project => project.id)].map(projectId => {
           const project = state.projects.find(candidate => candidate.id === projectId);
@@ -677,6 +875,19 @@ export default function TasksPage({ params, setParams }) {
                   onSelect={taskId => setParams({ ...params, task: params.task === taskId ? null : taskId })}
                   onStatusChange={onStatusChange}
                   selectedId={selectedTaskId}
+                  draggingId={draggingId}
+                  onDragStart={id => setDraggingId(id)}
+                  onDragEnd={() => { setDraggingId(null); setDragOverStatus(null); }}
+                  isDragOver={dragOverStatus === status}
+                  onDragOver={e => { e.preventDefault(); setDragOverStatus(status); }}
+                  onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverStatus(null); }}
+                  onDrop={e => {
+                    e.preventDefault();
+                    const taskId = e.dataTransfer.getData('text/plain');
+                    setDraggingId(null);
+                    setDragOverStatus(null);
+                    if (taskId) onStatusChange(taskId, status);
+                  }}
                 />
               ))}
             </div>
@@ -690,6 +901,7 @@ export default function TasksPage({ params, setParams }) {
             refresh={refresh}
             onStatusChange={onStatusChange}
             onClose={() => setParams({ ...params, task: null })}
+            onDeleted={() => { setParams({ ...params, task: null }); refresh(); }}
           />
         )}
       </div>

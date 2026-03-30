@@ -283,6 +283,81 @@ export default async function routes(req, res, url, { sendJson, readBody }) {
     return true;
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/pi-todo/tasks') {
+    const body = await readBody(req);
+    if (!body || typeof body.title !== 'string' || !body.title.trim()) {
+      sendJson(res, 400, { error: 'title is required' });
+      return true;
+    }
+    const store = readStore();
+    const at = new Date().toISOString();
+    const id = Math.random().toString(36).slice(2, 9);
+
+    let projectId = undefined;
+    let parentId = undefined;
+
+    if (typeof body.parentId === 'string' && body.parentId.trim()) {
+      const parent = findTask(store, body.parentId.trim());
+      if (!parent) { sendJson(res, 404, { error: `Parent task not found: ${body.parentId}` }); return true; }
+      parentId = parent.id;
+    }
+
+    if (!parentId && typeof body.projectId === 'string' && body.projectId.trim()) {
+      const project = findProject(store, body.projectId.trim());
+      if (!project) { sendJson(res, 404, { error: `Project not found: ${body.projectId}` }); return true; }
+      projectId = project.id;
+    }
+
+    const tags = Array.isArray(body.tags)
+      ? [...new Set(body.tags.map(t => String(t).trim()).filter(Boolean))]
+      : [];
+
+    const dependsOnIds = Array.isArray(body.dependsOnIds)
+      ? [...new Set(body.dependsOnIds.map(d => String(d).trim()).filter(Boolean))]
+      : [];
+
+    const task = {
+      id,
+      title: body.title.trim(),
+      description: typeof body.description === 'string' && body.description.trim() ? body.description.trim() : undefined,
+      parentId,
+      projectId,
+      tags,
+      dependsOnIds,
+      status: 'open',
+      createdAt: at,
+      updatedAt: at,
+      log: [],
+    };
+
+    if (parentId) {
+      const depError = validateDependsOnIds(store, task, dependsOnIds);
+      if (depError) { sendJson(res, 409, { error: depError }); return true; }
+    }
+
+    store.tasks.push(task);
+    writeStore(store);
+    sendJson(res, 200, enrichTask(store, task));
+    return true;
+  }
+
+  if (req.method === 'DELETE' && url.pathname.startsWith('/api/pi-todo/tasks/')) {
+    const id = url.pathname.split('/').pop();
+    const store = readStore();
+    const idx = store.tasks.findIndex(t => t.id === id);
+    if (idx === -1) { sendJson(res, 404, { error: 'Task not found' }); return true; }
+    const [removed] = store.tasks.splice(idx, 1);
+    // Also remove any subtasks
+    store.tasks = store.tasks.filter(t => t.parentId !== removed.id);
+    // Clean up dependency references
+    for (const t of store.tasks) {
+      if (t.dependsOnIds) t.dependsOnIds = t.dependsOnIds.filter(d => d !== removed.id);
+    }
+    writeStore(store);
+    sendJson(res, 200, { ok: true, deleted: removed });
+    return true;
+  }
+
   if (req.method === 'PATCH' && url.pathname.startsWith('/api/pi-todo/tasks/')) {
     const id = url.pathname.split('/').pop();
     const body = await readBody(req);
