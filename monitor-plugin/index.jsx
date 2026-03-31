@@ -163,6 +163,7 @@ export default function TasksPage({ params, setParams }) {
             state={state}
             refresh={refresh}
             onStatusChange={onStatusChange}
+            onSelectTask={taskId => setParams({ ...params, task: taskId })}
             onClose={() => setParams({ ...params, task: null })}
             onDeleted={() => {
               setParams({ ...params, task: null });

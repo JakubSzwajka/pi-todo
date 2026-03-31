@@ -56,7 +56,7 @@ function DependencyEditor({ task, allTasks, onDependencyChange }) {
   );
 }
 
-export function DetailPanel({ taskId, state, refresh, onClose, onStatusChange, onDeleted }) {
+export function DetailPanel({ taskId, state, refresh, onClose, onStatusChange, onDeleted, onSelectTask }) {
   const { tasks, projects } = state;
   const task = tasks.find(candidate => candidate.id === taskId);
   if (!task) return null;
@@ -133,7 +133,7 @@ export function DetailPanel({ taskId, state, refresh, onClose, onStatusChange, o
         {parent && (
           <section style={sectionStyle}>
             <SectionTitle>parent</SectionTitle>
-            <button onClick={() => refresh(parent.id)} style={linkButtonStyle}>{parent.title}</button>
+            <button onClick={() => onSelectTask(parent.id)} style={linkButtonStyle}>{parent.title}</button>
           </section>
         )}
 
@@ -169,12 +169,24 @@ export function DetailPanel({ taskId, state, refresh, onClose, onStatusChange, o
             <SectionTitle>subtasks</SectionTitle>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {subtasks.map(subtask => (
-                <div key={subtask.id} style={rowStyle}>
+                <button
+                  key={subtask.id}
+                  onClick={() => onSelectTask(subtask.id)}
+                  style={{
+                    ...rowStyle,
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                  }}
+                >
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                     <span style={chip(STATUS_META[subtask.status].color)}>{STATUS_META[subtask.status].label.split(' ')[0]}</span>
-                    <span style={{ fontSize: 12, color: subtask.status === 'done' ? 'var(--fg3)' : 'var(--fg)', textDecoration: subtask.status === 'done' ? 'line-through' : 'none' }}>{subtask.title}</span>
+                    <span style={{ fontSize: 12, color: subtask.status === 'done' ? 'var(--fg3)' : 'var(--fg)', textDecoration: subtask.status === 'done' ? 'line-through' : 'none' }}>
+                      {subtask.title}
+                    </span>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </section>
