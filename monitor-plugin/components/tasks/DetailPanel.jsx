@@ -56,7 +56,7 @@ function DependencyEditor({ task, allTasks, onDependencyChange }) {
   );
 }
 
-export function DetailPanel({ taskId, state, refresh, onClose, onStatusChange, onDeleted, onSelectTask }) {
+export function DetailPanel({ taskId, state, refresh, onClose, onStatusChange, onDeleted, onSelectTask, isSubtaskDrawer, activeSubtaskId }) {
   const { tasks, projects } = state;
   const task = tasks.find(candidate => candidate.id === taskId);
   if (!task) return null;
@@ -87,10 +87,15 @@ export function DetailPanel({ taskId, state, refresh, onClose, onStatusChange, o
 
   return (
     <div style={{
-      width: 'clamp(340px, 38vw, 760px)', maxWidth: '100%', borderLeft: '1px solid var(--border)', background: 'var(--bg2)',
+      width: isSubtaskDrawer ? 'clamp(280px, 28vw, 520px)' : 'clamp(340px, 38vw, 760px)',
+      minWidth: isSubtaskDrawer ? 280 : 340,
+      maxWidth: '100%',
+      borderLeft: `1px solid ${isSubtaskDrawer ? 'var(--accent)' : 'var(--border)'}`,
+      background: 'var(--bg2)',
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+        {isSubtaskDrawer && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>subtask</span>}
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg3)' }}>#{task.id}</span>
         <div style={{ flex: 1 }} />
         <CopyButton text={`task #${task.id}`} />
@@ -168,7 +173,9 @@ export function DetailPanel({ taskId, state, refresh, onClose, onStatusChange, o
           <section style={sectionStyle}>
             <SectionTitle>subtasks</SectionTitle>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {subtasks.map(subtask => (
+              {subtasks.map(subtask => {
+                const isActive = subtask.id === activeSubtaskId;
+                return (
                 <button
                   key={subtask.id}
                   onClick={() => onSelectTask(subtask.id)}
@@ -178,6 +185,10 @@ export function DetailPanel({ taskId, state, refresh, onClose, onStatusChange, o
                     width: '100%',
                     textAlign: 'left',
                     cursor: 'pointer',
+                    ...(isActive ? {
+                      borderColor: 'var(--accent)',
+                      background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
+                    } : {}),
                   }}
                 >
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -187,7 +198,8 @@ export function DetailPanel({ taskId, state, refresh, onClose, onStatusChange, o
                     </span>
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
           </section>
         )}

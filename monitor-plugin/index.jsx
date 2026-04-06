@@ -17,6 +17,7 @@ export default function TasksPage({ params, setParams }) {
   const [dragOverStatus, setDragOverStatus] = useState(null);
 
   const selectedTaskId = params.task ?? null;
+  const selectedSubtaskId = params.subtask ?? null;
   const activeProject = params.project ?? null;
   const showDone = params.done === '1';
 
@@ -36,6 +37,15 @@ export default function TasksPage({ params, setParams }) {
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  // Clear subtask param if it doesn't belong to the selected parent
+  useEffect(() => {
+    if (!selectedSubtaskId || !selectedTaskId) return;
+    const subtask = state.tasks.find(t => t.id === selectedSubtaskId);
+    if (subtask && subtask.parentId !== selectedTaskId) {
+      setParams({ ...params, subtask: null });
+    }
+  }, [selectedTaskId, selectedSubtaskId, state.tasks]);
 
   const visibleTasks = useMemo(() => {
     const filtered = activeProject
@@ -157,20 +167,43 @@ export default function TasksPage({ params, setParams }) {
           )}
         </div>
 
-        {!showProjects && selectedTaskId && (
+        {!showProjects && selectedTaskId && (<>
           <DetailPanel
             taskId={selectedTaskId}
             state={state}
             refresh={refresh}
             onStatusChange={onStatusChange}
-            onSelectTask={taskId => setParams({ ...params, task: taskId })}
-            onClose={() => setParams({ ...params, task: null })}
+            onSelectTask={taskId => {
+              const clicked = state.tasks.find(t => t.id === taskId);
+              if (clicked?.parentId === selectedTaskId) {
+                setParams({ ...params, subtask: params.subtask === taskId ? null : taskId });
+              } else {
+                setParams({ ...params, task: taskId, subtask: null });
+              }
+            }}
+            onClose={() => setParams({ ...params, task: null, subtask: null })}
             onDeleted={() => {
-              setParams({ ...params, task: null });
+              setParams({ ...params, task: null, subtask: null });
               refresh();
             }}
+            activeSubtaskId={selectedSubtaskId}
           />
-        )}
+          {selectedSubtaskId && (
+            <DetailPanel
+              taskId={selectedSubtaskId}
+              state={state}
+              refresh={refresh}
+              onStatusChange={onStatusChange}
+              onSelectTask={taskId => setParams({ ...params, task: taskId, subtask: null })}
+              onClose={() => setParams({ ...params, subtask: null })}
+              onDeleted={() => {
+                setParams({ ...params, subtask: null });
+                refresh();
+              }}
+              isSubtaskDrawer
+            />
+          )}
+        </>)}
       </div>
     </div>
   );
