@@ -49,6 +49,59 @@ async function obsAppend(path, content) {
 }
 
 // ---------------------------------------------------------------------------
+// Kanban board sync
+// ---------------------------------------------------------------------------
+
+const KANBAN_PATH = `${TASKS_PATH}/Kanban.md`;
+
+async function readKanban() {
+  try { return await obsRead(KANBAN_PATH); } catch { return null; }
+}
+
+async function writeKanban(content) {
+  try { await obsDelete(KANBAN_PATH); } catch { /* may not exist */ }
+  await obsCreate('Kanban', TASKS_PATH, content);
+}
+
+function removeCardFromContent(content, slug) {
+  return content.split('\n').filter(l => !l.includes(`[[${slug}]]`)).join('\n');
+}
+
+function insertCardInColumn(content, card, status) {
+  const lines = content.split('\n');
+  const idx = lines.findIndex(l => l.trim() === `## ${status}`);
+  if (idx === -1) return content;
+  let insertAt = idx + 1;
+  while (insertAt < lines.length && (lines[insertAt].startsWith('- [ ]') || lines[insertAt].trim() === '')) {
+    if (lines[insertAt].trim() === '' && insertAt === idx + 1) { insertAt++; continue; }
+    if (lines[insertAt].trim() === '') break;
+    insertAt++;
+  }
+  lines.splice(insertAt, 0, card);
+  return lines.join('\n');
+}
+
+async function kanbanAddCard(slug, status) {
+  const content = await readKanban();
+  if (!content || content.includes(`[[${slug}]]`)) return;
+  await writeKanban(insertCardInColumn(content, `- [ ] [[${slug}]]`, status));
+}
+
+async function kanbanMoveCard(slug, fromStatus, toStatus) {
+  if (fromStatus === toStatus) return;
+  const content = await readKanban();
+  if (!content) return;
+  const without = removeCardFromContent(content, slug);
+  await writeKanban(insertCardInColumn(without, `- [ ] [[${slug}]]`, toStatus));
+}
+
+async function kanbanRemoveCard(slug) {
+  const content = await readKanban();
+  if (!content || !content.includes(`[[${slug}]]`)) return;
+  await writeKanban(removeCardFromContent(content, slug));
+}
+
+// ---------------------------------------------------------------------------
 // Slug / path helpers
 // ---------------------------------------------------------------------------
 
@@ -550,6 +603,7 @@ export default async function routes(req, res, url, { sendJson, readBody }) {
     }
 
     await obsCreate(slug, TASKS_PATH, taskToMarkdown(task));
+    await kanbanAddCard(slug, 'open');
     const enriched = await enrichTask(task);
     sendJson(res, 200, enriched);
     return true;
@@ -581,6 +635,7 @@ export default async function routes(req, res, url, { sendJson, readBody }) {
     }
 
     await obsDelete(taskPath(task.id));
+    await kanbanRemoveCard(task.id);
     sendJson(res, 200, { ok: true, deleted: task });
     return true;
   }
@@ -655,7 +710,9 @@ export default async function routes(req, res, url, { sendJson, readBody }) {
         });
         return true;
       }
+      const prevStatus = task.status;
       task.status = body.status;
+      await kanbanMoveCard(task.id, prevStatus, body.status);
       await obsPropertySet(p, 'status', body.status);
       await obsPropertySet(p, 'updated', new Date().toISOString());
     }

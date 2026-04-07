@@ -24,6 +24,86 @@ import {
 export { slugify } from './markdown.js';
 
 // ---------------------------------------------------------------------------
+// Kanban board sync
+// ---------------------------------------------------------------------------
+
+const KANBAN_PATH = `${TASKS_PATH}/Kanban.md`;
+
+/** Read the Kanban board, returning raw content. Returns null if board doesn't exist. */
+async function readKanban(): Promise<string | null> {
+  try {
+    return await obsidianRead(KANBAN_PATH);
+  } catch {
+    return null;
+  }
+}
+
+/** Write the Kanban board by deleting + recreating (obsidian CLI has no overwrite). */
+async function writeKanban(content: string): Promise<void> {
+  try { await obsidianDelete(KANBAN_PATH); } catch { /* may not exist */ }
+  await obsidianCreate('Kanban', TASKS_PATH, content);
+}
+
+/** Add a card `- [ ] [[slug]]` to the given status column. */
+export async function kanbanAddCard(slug: string, status: string): Promise<void> {
+  const content = await readKanban();
+  if (!content) return;
+  const card = `- [ ] [[${slug}]]`;
+  if (content.includes(`[[${slug}]]`)) return; // already on board
+  const updated = insertCardInColumn(content, card, status);
+  await writeKanban(updated);
+}
+
+/** Move a card from one status column to another. */
+export async function kanbanMoveCard(slug: string, fromStatus: string, toStatus: string): Promise<void> {
+  if (fromStatus === toStatus) return;
+  const content = await readKanban();
+  if (!content) return;
+  const card = `- [ ] [[${slug}]]`;
+  const withoutCard = removeCardFromContent(content, slug);
+  const updated = insertCardInColumn(withoutCard, card, toStatus);
+  await writeKanban(updated);
+}
+
+/** Remove a card from the board entirely. */
+export async function kanbanRemoveCard(slug: string): Promise<void> {
+  const content = await readKanban();
+  if (!content) return;
+  if (!content.includes(`[[${slug}]]`)) return;
+  const updated = removeCardFromContent(content, slug);
+  await writeKanban(updated);
+}
+
+/** Remove all lines containing [[slug]] from content. */
+function removeCardFromContent(content: string, slug: string): string {
+  return content
+    .split('\n')
+    .filter((line) => !line.includes(`[[${slug}]]`))
+    .join('\n');
+}
+
+/** Insert a card line after the `## status` header. */
+function insertCardInColumn(content: string, card: string, status: string): string {
+  const lines = content.split('\n');
+  const header = `## ${status}`;
+  const idx = lines.findIndex((l) => l.trim() === header);
+  if (idx === -1) return content; // column not found
+  // Insert after header and any existing cards
+  let insertAt = idx + 1;
+  while (insertAt < lines.length && (lines[insertAt]!.startsWith('- [ ]') || lines[insertAt]!.trim() === '')) {
+    if (lines[insertAt]!.trim() === '' && insertAt === idx + 1) {
+      // Skip the blank line right after header
+      insertAt++;
+      continue;
+    }
+    if (lines[insertAt]!.trim() === '') break; // hit the gap between columns
+    insertAt++;
+  }
+  lines.splice(insertAt, 0, card);
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -420,12 +500,14 @@ export async function addTask(params: {
     log: params.note ? [{ at: now, author: params.note.author, text: params.note.text }] : [],
   };
   await obsidianCreate(slug, TASKS_PATH, taskToMarkdown(task));
+  await kanbanAddCard(slug, 'open');
   return task;
 }
 
 export async function updateTask(slug: string, updates: Partial<Pick<Task, 'title' | 'description' | 'parentId' | 'projectId' | 'tags' | 'dependsOnIds' | 'status'>>): Promise<Task> {
   await ensureObsidian();
   const task = await readTask(slug);
+  const prevStatus = task.status;
 
   if (updates.title !== undefined) task.title = updates.title;
   if (updates.description !== undefined) task.description = updates.description;
@@ -439,6 +521,9 @@ export async function updateTask(slug: string, updates: Partial<Pick<Task, 'titl
   // Full rewrite — ensures description + frontmatter stay consistent
   await obsidianDelete(taskPath(slug));
   await obsidianCreate(slug, TASKS_PATH, taskToMarkdown(task));
+  if (updates.status !== undefined && prevStatus !== updates.status) {
+    await kanbanMoveCard(slug, prevStatus, updates.status);
+  }
   return task;
 }
 
@@ -446,6 +531,14 @@ export async function updateTaskProperty(slug: string, field: string, value: str
   await ensureObsidian();
   const fm = fmName(field);
   const path = taskPath(slug);
+  // If changing status, sync Kanban board
+  if (field === 'status' && typeof value === 'string') {
+    const props = await obsidianProperties(path);
+    const prevStatus = (props.status as string) ?? 'open';
+    if (prevStatus !== value) {
+      await kanbanMoveCard(slug, prevStatus, value);
+    }
+  }
   await obsidianPropertySet(path, fm, value, fmType(fm));
   await obsidianPropertySet(path, 'updated', nowIso());
 }
@@ -460,6 +553,7 @@ export async function appendLog(slug: string, entry: LogEntry): Promise<void> {
 export async function deleteTask(slug: string): Promise<void> {
   await ensureObsidian();
   await obsidianDelete(taskPath(slug));
+  await kanbanRemoveCard(slug);
 }
 
 // ---------------------------------------------------------------------------
