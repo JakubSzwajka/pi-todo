@@ -27,7 +27,7 @@ export { slugify } from './markdown.js';
 // Kanban board sync
 // ---------------------------------------------------------------------------
 
-const KANBAN_PATH = `${TASKS_PATH}/Kanban.md`;
+const KANBAN_PATH = 'Kanban.md';
 
 /** Read the Kanban board, returning raw content. Returns null if board doesn't exist. */
 async function readKanban(): Promise<string | null> {
@@ -41,7 +41,7 @@ async function readKanban(): Promise<string | null> {
 /** Write the Kanban board by deleting + recreating (obsidian CLI has no overwrite). */
 async function writeKanban(content: string): Promise<void> {
   try { await obsidianDelete(KANBAN_PATH); } catch { /* may not exist */ }
-  await obsidianCreate('Kanban', TASKS_PATH, content);
+  await obsidianCreate('Kanban', '', content);
 }
 
 /** Add a card `- [ ] [[slug]]` to the given status column. */

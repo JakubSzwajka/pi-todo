@@ -52,7 +52,7 @@ async function obsAppend(path, content) {
 // Kanban board sync
 // ---------------------------------------------------------------------------
 
-const KANBAN_PATH = `${TASKS_PATH}/Kanban.md`;
+const KANBAN_PATH = 'Kanban.md';
 
 async function readKanban() {
   try { return await obsRead(KANBAN_PATH); } catch { return null; }
@@ -60,7 +60,7 @@ async function readKanban() {
 
 async function writeKanban(content) {
   try { await obsDelete(KANBAN_PATH); } catch { /* may not exist */ }
-  await obsCreate('Kanban', TASKS_PATH, content);
+  await obsCreate('Kanban', '', content);
 }
 
 function removeCardFromContent(content, slug) {
