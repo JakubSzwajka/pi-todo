@@ -1,19 +1,27 @@
 import {
-  readStore,
-  writeStore,
-  generateId,
-  findTask,
+  addProject,
+  addTask,
+  appendLog,
+  deleteProject,
+  deleteTask,
   findProject,
-  validateDependsOnIds,
-  validateTaskProjectAssignment,
-  validateProject,
-  getUnresolvedDependencies,
-  statusRequiresResolvedDependencies,
+  findTask,
   getTaskProject,
   getTaskProjectId,
+  getUnresolvedDependencies,
+  listProjects,
+  listTasks,
   normalizeProjectInput,
+  resolveTaskIds,
+  statusRequiresResolvedDependencies,
+  updateProject,
+  updateTask,
+  updateTaskProperty,
+  validateDependsOnIds,
+  validateProject,
+  validateTaskProjectAssignment,
 } from './store.js';
-import type { Status, Author, Task, ProjectRepo } from './types.js';
+import type { Author, ProjectRepo, Status, Task } from './types.js';
 
 const c = {
   reset:   '\x1b[0m',
@@ -73,14 +81,13 @@ function fmtTags(tags: string[]) {
   return tags.map(tag => `${c.cyan}#${tag}${c.reset}`).join(' ');
 }
 
-function fmtTask(t: Task, showFull = false, allTasks: Task[] = []) {
-  const store = readStore();
+async function fmtTask(t: Task, showFull = false, allTasks: Task[] = []) {
   const lines: string[] = [];
   const parent = t.parentId ? allTasks.find(p => p.id === t.parentId) : undefined;
   const dependencies = allTasks.filter(candidate => (t.dependsOnIds ?? []).includes(candidate.id));
   const blockedBy = allTasks.filter(candidate => (candidate.dependsOnIds ?? []).includes(t.id));
   const unresolved = dependencies.filter(candidate => candidate.status !== 'done');
-  const project = getTaskProject(store, t);
+  const project = await getTaskProject(t);
   const projectChip = fmtProject(project?.id, project?.name);
   const tagsChip = fmtTags(t.tags);
 
@@ -145,7 +152,7 @@ function fmtTask(t: Task, showFull = false, allTasks: Task[] = []) {
     lines.push('');
     lines.push(`  ${c.dim}Subtasks:${c.reset}`);
     for (const child of children) {
-      const childProject = getTaskProject(store, child);
+      const childProject = await getTaskProject(child);
       lines.push(`    ${c.dim}#${child.id}${c.reset}  ${child.title}  ${fmtStatus(child.status)}${childProject ? `  ${fmtProject(childProject.id, childProject.name)}` : ''}`);
     }
   }
@@ -158,23 +165,22 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-function mustTask(id: string) {
-  const store = readStore();
-  const task = findTask(store, id);
+async function mustTask(id: string): Promise<Task> {
+  const task = await findTask(id);
   if (!task) fail(`Task not found: ${id}`);
-  return { store, task };
+  return task;
 }
 
-function mustProject(id: string) {
-  const store = readStore();
-  const project = findProject(store, id);
+async function mustProject(id: string) {
+  const project = await findProject(id);
   if (!project) fail(`Project not found: ${id}`);
-  return { store, project };
+  return project;
 }
 
-function fmtProjectBlock(projectId: string) {
-  const { store, project } = mustProject(projectId);
-  const tasks = store.tasks.filter(task => getTaskProjectId(store, task) === project.id && !task.parentId);
+async function fmtProjectBlock(projectId: string) {
+  const project = await mustProject(projectId);
+  const tasks = await listTasks({ project: project.id, all: true });
+  const parentTasks = tasks.filter(task => !task.parentId);
   const lines = [
     `${c.bold}${project.name}${c.reset} ${c.gray}(${project.id})${c.reset}`,
     project.description ? `${c.dim}${project.description}${c.reset}` : '',
@@ -183,13 +189,13 @@ function fmtProjectBlock(projectId: string) {
     ...(project.repos.length > 0 ? project.repos.map(fmtRepo) : ['  - none']),
     '',
     `${c.dim}Parent tasks:${c.reset}`,
-    ...(tasks.length > 0 ? tasks.map(task => `  - #${task.id} ${task.title}  ${STATUS_LABEL[task.status]}`) : ['  - none']),
+    ...(parentTasks.length > 0 ? parentTasks.map(task => `  - #${task.id} ${task.title}  ${STATUS_LABEL[task.status]}`) : ['  - none']),
   ].filter(Boolean);
 
   return lines.join('\n');
 }
 
-export function cmdAdd(title: string, opts: {
+export async function cmdAdd(title: string, opts: {
   description?: string;
   note?: string;
   parentId?: string;
@@ -197,80 +203,88 @@ export function cmdAdd(title: string, opts: {
   projectId?: string;
   tags?: string[];
 }) {
-  const store = readStore();
-  const now = new Date().toISOString();
-  const task: Task = {
-    id: generateId(),
+  // Build a temporary task-like object for validation
+  const tempTask = {
+    id: '__pending__',
     title,
-    description: opts.description,
     parentId: opts.parentId,
     projectId: opts.parentId ? undefined : opts.projectId,
     tags: [...new Set(opts.tags ?? [])],
     dependsOnIds: [...new Set(opts.dependsOnIds ?? [])],
-    status: 'open',
-    createdAt: now,
-    updatedAt: now,
-    log: opts.note ? [{ at: now, author: 'kuba', text: opts.note }] : [],
+    status: 'open' as const,
+    createdAt: '',
+    updatedAt: '',
+    log: [],
   };
 
-  const assignmentError = validateTaskProjectAssignment(store, task);
+  const assignmentError = await validateTaskProjectAssignment(tempTask);
   if (assignmentError) fail(assignmentError);
 
-  const dependencyError = validateDependsOnIds(store, task, task.dependsOnIds);
+  const dependencyError = await validateDependsOnIds(tempTask, tempTask.dependsOnIds);
   if (dependencyError) fail(dependencyError);
 
-  store.tasks.push(task);
-  writeStore(store);
+  const task = await addTask({
+    title,
+    description: opts.description,
+    parentId: opts.parentId,
+    projectId: opts.projectId,
+    tags: opts.tags,
+    dependsOnIds: opts.dependsOnIds,
+    note: opts.note ? { text: opts.note, author: 'kuba' } : undefined,
+  });
+
   console.log(`${c.green}✓${c.reset} Added ${c.bold}#${task.id}${c.reset} — ${task.title}`);
   return task;
 }
 
-export function cmdList(opts: { status?: string; all?: boolean; projectId?: string; tag?: string }) {
-  const store = readStore();
-  let tasks = store.tasks;
-
-  if (!opts.all && !opts.status) tasks = tasks.filter(t => t.status !== 'done' && t.status !== 'cancelled');
-  else if (opts.status) tasks = tasks.filter(t => t.status === opts.status);
-
+export async function cmdList(opts: { status?: string; all?: boolean; projectId?: string; tag?: string }) {
+  let projectFilter: string | undefined;
   if (opts.projectId) {
-    const { project } = mustProject(opts.projectId);
-    tasks = tasks.filter(task => getTaskProjectId(store, task) === project.id);
+    const project = await mustProject(opts.projectId);
+    projectFilter = project.id;
   }
-  if (opts.tag) {
-    tasks = tasks.filter(task => task.tags.includes(opts.tag!));
-  }
+
+  const tasks = await listTasks({
+    status: opts.status as Status | undefined,
+    project: projectFilter,
+    tag: opts.tag,
+    all: opts.all,
+  });
 
   if (tasks.length === 0) {
     console.log(`${c.gray}No tasks.${c.reset}`);
     return [];
   }
 
-  for (const t of tasks) console.log(fmtTask(t, false, store.tasks));
+  // Fetch all tasks for cross-referencing (dependencies, blocking, etc.)
+  const allTasks = await listTasks({ all: true });
+  for (const t of tasks) console.log(await fmtTask(t, false, allTasks));
   return tasks;
 }
 
-export function cmdShow(id: string) {
-  const { store, task } = mustTask(id);
-  console.log(fmtTask(task, true, store.tasks));
+export async function cmdShow(id: string) {
+  const task = await mustTask(id);
+  const allTasks = await listTasks({ all: true });
+  console.log(await fmtTask(task, true, allTasks));
   return task;
 }
 
-export function cmdStatus(id: string, status: string) {
+export async function cmdStatus(id: string, status: string) {
   const valid: Status[] = ['open', 'in_progress', 'review', 'testing', 'waiting', 'done', 'cancelled'];
   if (!valid.includes(status as Status)) fail(`Invalid status. Use: ${valid.join(' | ')}`);
-  const { store, task } = mustTask(id);
+  const task = await mustTask(id);
   const nextStatus = status as Status;
-  const unresolved = statusRequiresResolvedDependencies(nextStatus) ? getUnresolvedDependencies(store, task) : [];
-  if (unresolved.length > 0) fail(`Cannot move #${task.id} to ${nextStatus}; unresolved dependencies: ${unresolved.map(t => `#${t.id}`).join(', ')}`);
+  if (statusRequiresResolvedDependencies(nextStatus)) {
+    const unresolved = await getUnresolvedDependencies(task);
+    if (unresolved.length > 0) fail(`Cannot move #${task.id} to ${nextStatus}; unresolved dependencies: ${unresolved.map(t => `#${t.id}`).join(', ')}`);
+  }
   const prev = task.status;
-  task.status = nextStatus;
-  task.updatedAt = new Date().toISOString();
-  writeStore(store);
+  await updateTaskProperty(task.id, 'status', nextStatus);
   console.log(`${c.green}✓${c.reset} #${task.id}  ${fmtStatus(prev)} → ${fmtStatus(nextStatus)}`);
   return task;
 }
 
-export function cmdUpdate(id: string, opts: {
+export async function cmdUpdate(id: string, opts: {
   title?: string;
   description?: string;
   parentId?: string;
@@ -278,7 +292,7 @@ export function cmdUpdate(id: string, opts: {
   projectId?: string;
   tags?: string[];
 }) {
-  const { store, task } = mustTask(id);
+  const task = await mustTask(id);
 
   const nextTask: Task = {
     ...task,
@@ -290,101 +304,90 @@ export function cmdUpdate(id: string, opts: {
     dependsOnIds: opts.dependsOnIds ?? task.dependsOnIds ?? [],
   };
 
-  const assignmentError = validateTaskProjectAssignment(store, nextTask);
+  const assignmentError = await validateTaskProjectAssignment(nextTask);
   if (assignmentError) fail(assignmentError);
 
-  const dependencyError = validateDependsOnIds(store, nextTask, nextTask.dependsOnIds);
+  const dependencyError = await validateDependsOnIds(nextTask, nextTask.dependsOnIds);
   if (dependencyError) fail(dependencyError);
 
-  task.title = nextTask.title;
-  task.description = nextTask.description;
-  task.parentId = nextTask.parentId;
-  task.projectId = nextTask.projectId;
-  task.tags = nextTask.tags;
-  task.dependsOnIds = nextTask.dependsOnIds;
-  task.updatedAt = new Date().toISOString();
-  writeStore(store);
+  await updateTask(task.id, {
+    title: nextTask.title,
+    description: nextTask.description,
+    parentId: nextTask.parentId,
+    projectId: nextTask.projectId,
+    tags: nextTask.tags,
+    dependsOnIds: nextTask.dependsOnIds,
+  });
+
   console.log(`${c.green}✓${c.reset} Updated #${task.id}`);
   return task;
 }
 
-export function cmdLog(id: string, text: string, author: Author = 'kuba') {
-  const { store, task } = mustTask(id);
+export async function cmdLog(id: string, text: string, author: Author = 'kuba') {
+  const task = await mustTask(id);
   const entry = { at: new Date().toISOString(), author, text };
-  task.log.push(entry);
-  task.updatedAt = entry.at;
-  writeStore(store);
+  await appendLog(task.id, entry);
   console.log(`${c.green}✓${c.reset} Note added to #${task.id}`);
   return task;
 }
 
-export function cmdDelete(id: string) {
-  const store = readStore();
-  const idx = store.tasks.findIndex(t => t.id === id || t.id.startsWith(id));
-  if (idx === -1) fail(`Task not found: ${id}`);
-  const [removed] = store.tasks.splice(idx, 1);
-  writeStore(store);
-  console.log(`${c.green}✓${c.reset} Deleted #${removed.id} — ${removed.title}`);
-  return removed;
+export async function cmdDelete(id: string) {
+  const task = await mustTask(id);
+  await deleteTask(task.id);
+  console.log(`${c.green}✓${c.reset} Deleted #${task.id} — ${task.title}`);
+  return task;
 }
 
-export function cmdProjectAdd(opts: { id?: string; name: string; description?: string; repos?: ProjectRepo[] }) {
-  const store = readStore();
-  const project = normalizeProjectInput(opts);
-  const error = validateProject(store, project);
+export async function cmdProjectAdd(opts: { id?: string; name: string; description?: string; repos?: ProjectRepo[] }) {
+  const normalized = normalizeProjectInput(opts);
+  const error = await validateProject(normalized);
   if (error) fail(error);
-  store.projects.push(project);
-  writeStore(store);
+  const project = await addProject(opts);
   console.log(`${c.green}✓${c.reset} Added project ${c.bold}${project.name}${c.reset} (${project.id})`);
   return project;
 }
 
-export function cmdProjectList() {
-  const store = readStore();
-  if (store.projects.length === 0) {
+export async function cmdProjectList() {
+  const projects = await listProjects();
+  if (projects.length === 0) {
     console.log(`${c.gray}No projects.${c.reset}`);
     return [];
   }
-  for (const project of store.projects) {
-    const taskCount = store.tasks.filter(task => getTaskProjectId(store, task) === project.id && !task.parentId).length;
-    console.log(`${c.bold}${project.name}${c.reset} ${c.gray}(${project.id})${c.reset}  ${c.magenta}${taskCount} tasks${c.reset}`);
+  for (const project of projects) {
+    const tasks = await listTasks({ project: project.id, all: true });
+    const parentCount = tasks.filter(t => !t.parentId).length;
+    console.log(`${c.bold}${project.name}${c.reset} ${c.gray}(${project.id})${c.reset}  ${c.magenta}${parentCount} tasks${c.reset}`);
   }
-  return store.projects;
+  return projects;
 }
 
-export function cmdProjectShow(id: string) {
-  console.log(fmtProjectBlock(id));
+export async function cmdProjectShow(id: string) {
+  console.log(await fmtProjectBlock(id));
 }
 
-export function cmdProjectUpdate(id: string, opts: { name?: string; description?: string; repos?: ProjectRepo[]; nextId?: string }) {
-  const { store, project: existing } = mustProject(id);
+export async function cmdProjectUpdate(id: string, opts: { name?: string; description?: string; repos?: ProjectRepo[]; nextId?: string }) {
+  const existing = await mustProject(id);
   const next = normalizeProjectInput({ id: opts.nextId ?? existing.id, name: opts.name, description: opts.description, repos: opts.repos }, existing);
-  const error = validateProject(store, next, existing.id);
+  const error = await validateProject(next, existing.id);
   if (error) fail(error);
 
-  const previousId = existing.id;
-  existing.id = next.id;
-  existing.name = next.name;
-  existing.description = next.description;
-  existing.repos = next.repos;
-  existing.updatedAt = next.updatedAt;
+  const updated = await updateProject(existing.id, {
+    name: opts.name,
+    description: opts.description,
+    repos: opts.repos,
+    nextId: opts.nextId,
+  });
 
-  if (previousId !== existing.id) {
-    for (const task of store.tasks) {
-      if (task.projectId === previousId) task.projectId = existing.id;
-    }
-  }
-
-  writeStore(store);
-  console.log(`${c.green}✓${c.reset} Updated project ${c.bold}${existing.name}${c.reset} (${existing.id})`);
-  return existing;
+  console.log(`${c.green}✓${c.reset} Updated project ${c.bold}${updated.name}${c.reset} (${updated.id})`);
+  return updated;
 }
 
-export function cmdProjectDelete(id: string) {
-  const { store, project } = mustProject(id);
-  const inUse = store.tasks.some(task => getTaskProjectId(store, task) === project.id);
-  if (inUse) fail(`Cannot delete project ${project.id}; tasks still reference it`);
-  store.projects = store.projects.filter(candidate => candidate.id !== project.id);
-  writeStore(store);
+export async function cmdProjectDelete(id: string) {
+  const project = await mustProject(id);
+  try {
+    await deleteProject(project.id);
+  } catch (err: unknown) {
+    fail((err as Error).message);
+  }
   console.log(`${c.green}✓${c.reset} Deleted project ${project.id}`);
 }

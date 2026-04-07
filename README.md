@@ -1,10 +1,16 @@
 # lucy // pi-todo
 
-> Flat-file task + project manager for [pi](https://pi.dev/). Works as a pi extension, standalone CLI, and pi-monitor plugin.
+> Obsidian-backed task + project manager for [pi](https://pi.dev/). Works as a pi extension, standalone CLI, and pi-monitor plugin.
 
-Tasks now belong to first-class **projects**, and can also carry lightweight **tags** as secondary labels. Projects carry durable repo metadata such as local workspace paths, while tags stay optional and free-form.
+Tasks and projects are stored as **individual markdown files** inside an Obsidian vault. Task descriptions support `[[wikilinks]]` to knowledge nodes, making them first-class citizens in your knowledge graph.
 
 Built by [Lucy](https://github.com/JakubSzwajka/lucy).
+
+## Requirements
+
+- Node.js 20+
+- [Obsidian](https://obsidian.md/) 1.12+ with CLI registered in PATH
+- Obsidian **must be running** for any pitodo operation
 
 ## Install
 
@@ -12,6 +18,9 @@ Built by [Lucy](https://github.com/JakubSzwajka/lucy).
 git clone https://github.com/JakubSzwajka/pi-todo.git
 cd pi-todo
 npm install
+
+# Verify Obsidian CLI is available
+obsidian version
 ```
 
 ### As a pi extension
@@ -30,29 +39,86 @@ alias todo="$(pwd)/bin/todo"
 
 ## Data model
 
-```ts
-Store {
-  projects: Project[]
-  tasks: Task[]
-}
+Tasks are stored as individual markdown files in `~/knowledge/tasks/`.
+Projects are stored in `~/knowledge/tasks/projects/`.
+
+File names are slug-based (e.g. `implement-outbox-pattern.md`).
+
+### Task frontmatter
+
+```yaml
+---
+type: task
+title: "Implement outbox pattern"
+status: in_progress
+project: snapcap
+parent: parent-slug
+depends:
+  - dep-slug-a
+tags:
+  - type/task
+  - backend
+created: 2026-04-01T10:00:00Z
+updated: 2026-04-06T14:30:00Z
+---
+```
+
+### Project frontmatter
+
+```yaml
+---
+type: project
+name: snapcap
+description: "SnapCap backend service"
+tags:
+  - type/project
+created: ...
+updated: ...
+---
 ```
 
 ### Projects
-- one project can own many tasks
-- stores repo metadata (`local`, `github`, or generic `git`)
-- one repo can be marked `primary`
+- One project can own many tasks
+- Stores repo metadata (`local`, `github`, or generic `git`)
+- One repo can be marked `primary`
 
 ### Tasks
-- parent tasks can set `projectId`
-- tasks can also carry optional `tags: string[]`
-- subtasks inherit the parent project automatically
-- sibling dependencies are still supported via `dependsOnIds`
+- Parent tasks can set `project`
+- Tasks can carry optional `tags: string[]`
+- Subtasks inherit the parent project automatically
+- Sibling dependencies via `depends`
 
-Legacy tag-based stores are migrated on read:
-- parent task tags can seed projects during migration
-- the first legacy tag becomes the parent task project when no project is already set
-- tags themselves are preserved on tasks
-- subtasks inherit projects from parents
+## Wikilinks
+
+Task descriptions (the markdown body below frontmatter) can contain `[[wikilinks]]` to knowledge nodes. These are live links in Obsidian — referenced nodes show the task in their **backlinks panel**, connecting tasks to your knowledge graph.
+
+## Obsidian integration
+
+**Dataview queries** work out of the box:
+
+```dataview
+TABLE status, project FROM "tasks" WHERE type = "task" AND status != "done"
+```
+
+- **Backlinks panel** shows which tasks reference which knowledge nodes
+- **Graph view** includes tasks in the knowledge graph
+
+## Migration
+
+If you have an existing JSON store (`~/.pi/.pi-todo.json`), migrate it to Obsidian:
+
+```bash
+# Dry run first
+npx tsx scripts/migrate-to-obsidian.ts --dry-run
+
+# Run migration
+npx tsx scripts/migrate-to-obsidian.ts
+
+# Skip archiving done tasks
+npx tsx scripts/migrate-to-obsidian.ts --no-archive-done
+```
+
+Migrates from `~/.pi/.pi-todo.json` to `~/knowledge/tasks/`. Task IDs change from random UUIDs to slug-based file names. The old JSON file is backed up as `.bak`.
 
 ## CLI usage
 
@@ -118,21 +184,31 @@ Useful params:
 
 This extension ships with a `monitor-plugin/` directory for [pi-monitor](https://github.com/JakubSzwajka/pi-monitor).
 
-The plugin now supports:
-- project-aware task filtering
-- optional task tags with inline editing in the detail panel
-- project management and repo editing
-- project badges on cards
-- task detail panels showing inherited project + repo metadata
-- dependency editing for sibling tasks
+The plugin supports:
+- Project-aware task filtering
+- Optional task tags with inline editing in the detail panel
+- Project management and repo editing
+- Project badges on cards
+- Task detail panels showing inherited project + repo metadata
+- Dependency editing for sibling tasks
 
 If you have pi-monitor installed, it picks up the plugin automatically.
+
+## Error handling
+
+If Obsidian is not running:
+
+```
+Obsidian is not running. Please open Obsidian and try again.
+```
+
+There is no fallback mode. Obsidian must be running for all operations.
 
 ## Config
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `PI_TODO_STORE` | `~/.pi/.pi-todo.json` | Path to the store file |
+| `PI_TODO_VAULT` | `~/knowledge` | Path to the Obsidian vault |
 
 ## License
 

@@ -1,64 +1,337 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, dirname } from 'node:path';
-import type { Store, Task, LogEntry, Author, Status, Project, ProjectRepo, ProjectRepoKind } from './types.js';
+import type { LogEntry, Project, ProjectRepo, ProjectRepoKind, Status, Task } from './types.js';
+import {
+  ensureObsidian,
+  obsidianAppend,
+  obsidianCreate,
+  obsidianDelete,
+  obsidianProperties,
+  obsidianPropertySet,
+  obsidianRead,
+  obsidianSearch,
+  PROJECTS_PATH,
+  TASKS_PATH,
+} from './obsidian.js';
+import {
+  formatLogEntry,
+  generateSlug,
+  markdownToProject,
+  markdownToTask,
+  projectToMarkdown,
+  slugify,
+  taskToMarkdown,
+} from './markdown.js';
 
-export const STORE_PATH = process.env.PI_TODO_STORE
-  ?? join(homedir(), '.pi', '.pi-todo.json');
+export { slugify } from './markdown.js';
 
-function nowIso() {
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function nowIso(): string {
   return new Date().toISOString();
 }
 
-export function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64) || 'project';
+function taskPath(slug: string): string {
+  return `${TASKS_PATH}/${slug}.md`;
 }
 
-function uniqueSlug(base: string, taken: Set<string>): string {
-  let next = slugify(base);
-  if (!taken.has(next)) {
-    taken.add(next);
-    return next;
+function projectPath(slug: string): string {
+  return `${PROJECTS_PATH}/${slug}.md`;
+}
+
+/** Extract the slug (filename without extension) from a vault path. */
+function slugFromPath(path: string): string {
+  return path.replace(/^.*\//, '').replace(/\.md$/, '');
+}
+
+// ---------------------------------------------------------------------------
+// Field-name mapping: Task ↔ frontmatter
+// ---------------------------------------------------------------------------
+
+const TASK_FIELD_TO_FM: Record<string, string> = {
+  projectId: 'project',
+  parentId: 'parent',
+  dependsOnIds: 'depends',
+  createdAt: 'created',
+  updatedAt: 'updated',
+};
+
+const LIST_PROPERTIES = new Set(['depends', 'tags']);
+const BOOLEAN_PROPERTIES = new Set(['archived']);
+
+function fmName(taskField: string): string {
+  return TASK_FIELD_TO_FM[taskField] ?? taskField;
+}
+
+function fmType(fmKey: string): string | undefined {
+  if (LIST_PROPERTIES.has(fmKey)) return 'list';
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Slug deduplication
+// ---------------------------------------------------------------------------
+
+async function uniqueSlugAsync(base: string, pathPrefix: string): Promise<string> {
+  const candidate = slugify(base);
+  try {
+    await obsidianRead(`${pathPrefix}/${candidate}.md`);
+  } catch {
+    return candidate;
   }
   let i = 2;
-  while (taken.has(`${next}-${i}`)) i++;
-  const candidate = `${next}-${i}`;
-  taken.add(candidate);
-  return candidate;
-}
-
-function normalizeLogEntry(value: unknown): LogEntry | null {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as Record<string, unknown>;
-  if (typeof raw.at !== 'string') return null;
-  if (typeof raw.author !== 'string') return null;
-  if (typeof raw.text !== 'string') return null;
-  return {
-    at: raw.at,
-    author: raw.author as Author,
-    text: raw.text,
-  };
-}
-
-function normalizeStatus(value: unknown): Status {
-  switch (value) {
-    case 'open':
-    case 'in_progress':
-    case 'review':
-    case 'testing':
-    case 'waiting':
-    case 'done':
-    case 'cancelled':
-      return value;
-    default:
-      return 'open';
+  while (true) {
+    const next = `${candidate}-${i}`;
+    try {
+      await obsidianRead(`${pathPrefix}/${next}.md`);
+      i++;
+    } catch {
+      return next;
+    }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Read helpers
+// ---------------------------------------------------------------------------
+
+async function readTask(slug: string): Promise<Task> {
+  const path = taskPath(slug);
+  const [content, props] = await Promise.all([
+    obsidianRead(path),
+    obsidianProperties(path),
+  ]);
+  return markdownToTask(slug, content, props);
+}
+
+async function readProject(slug: string): Promise<Project> {
+  const path = projectPath(slug);
+  const [content, props] = await Promise.all([
+    obsidianRead(path),
+    obsidianProperties(path),
+  ]);
+  return markdownToProject(slug, content, props);
+}
+
+// ---------------------------------------------------------------------------
+// Search / list (two-phase)
+// ---------------------------------------------------------------------------
+
+export interface TaskFilters {
+  status?: Status;
+  project?: string;
+  tag?: string;
+  parent?: string;
+  all?: boolean;
+}
+
+export async function listTasks(filters?: TaskFilters): Promise<Task[]> {
+  await ensureObsidian();
+  const paths = await obsidianSearch('tag:type/task', { path: TASKS_PATH });
+  if (paths.length === 0) return [];
+
+  // Phase 1: read properties for all matches
+  const entries = await Promise.all(
+    paths.map(async (p) => {
+      const slug = slugFromPath(p);
+      const props = await obsidianProperties(p);
+      return { path: p, slug, props };
+    }),
+  );
+
+  // Phase 2: filter by frontmatter properties
+  const matching = entries.filter(({ props }) => {
+    const status = props.status as string | undefined;
+    if (!filters?.all && !filters?.status) {
+      if (status === 'done' || status === 'cancelled') return false;
+    }
+    if (filters?.status && status !== filters.status) return false;
+    if (filters?.project) {
+      const project = props.project as string | undefined;
+      if (project !== filters.project) return false;
+    }
+    if (filters?.tag) {
+      const tags = Array.isArray(props.tags) ? props.tags as string[] : [];
+      if (!tags.includes(filters.tag)) return false;
+    }
+    if (filters?.parent !== undefined) {
+      const parent = props.parent as string | undefined;
+      if ((parent ?? '') !== filters.parent) return false;
+    }
+    return true;
+  });
+
+  // Phase 3: full read for matching tasks
+  return Promise.all(
+    matching.map(({ slug, path: p }) => readTaskFromPathAndSlug(slug, p)),
+  );
+}
+
+async function readTaskFromPathAndSlug(slug: string, path: string): Promise<Task> {
+  const [content, props] = await Promise.all([
+    obsidianRead(path),
+    obsidianProperties(path),
+  ]);
+  return markdownToTask(slug, content, props);
+}
+
+export async function listProjects(): Promise<Project[]> {
+  await ensureObsidian();
+  const paths = await obsidianSearch('tag:type/project', { path: PROJECTS_PATH });
+  if (paths.length === 0) return [];
+  return Promise.all(
+    paths.map(async (p) => {
+      const slug = slugFromPath(p);
+      return readProject(slug);
+    }),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Single-record access
+// ---------------------------------------------------------------------------
+
+export async function getTask(slug: string): Promise<Task> {
+  await ensureObsidian();
+  return readTask(slug);
+}
+
+export async function getProject(slug: string): Promise<Project> {
+  await ensureObsidian();
+  return readProject(slug);
+}
+
+// ---------------------------------------------------------------------------
+// Find by ID or prefix (compat with old findTask / findProject)
+// ---------------------------------------------------------------------------
+
+export async function findTask(id: string): Promise<Task | undefined> {
+  await ensureObsidian();
+  // Try exact match first
+  try {
+    return await readTask(id);
+  } catch { /* not found */ }
+
+  // Prefix search: list all task paths, find prefix match
+  const paths = await obsidianSearch('tag:type/task', { path: TASKS_PATH });
+  const match = paths.find((p) => slugFromPath(p).startsWith(id));
+  if (!match) return undefined;
+  return readTask(slugFromPath(match));
+}
+
+export async function findProject(id: string): Promise<Project | undefined> {
+  await ensureObsidian();
+  const normalized = slugify(id);
+  try {
+    return await readProject(normalized);
+  } catch { /* not found */ }
+
+  const paths = await obsidianSearch('tag:type/project', { path: PROJECTS_PATH });
+  const match = paths.find((p) => slugFromPath(p).startsWith(normalized));
+  if (!match) return undefined;
+  return readProject(slugFromPath(match));
+}
+
+export async function resolveTaskIds(ids: string[] | undefined): Promise<Task[]> {
+  if (!ids?.length) return [];
+  const results = await Promise.all(ids.map((id) => findTask(id)));
+  return results.filter((t): t is Task => t !== undefined);
+}
+
+// ---------------------------------------------------------------------------
+// Task project resolution
+// ---------------------------------------------------------------------------
+
+export async function getTaskProjectId(task: Task): Promise<string | undefined> {
+  if (task.projectId) return task.projectId;
+  if (!task.parentId) return undefined;
+  const parent = await findTask(task.parentId);
+  return parent?.projectId;
+}
+
+export async function getTaskProject(task: Task): Promise<Project | undefined> {
+  const projectId = await getTaskProjectId(task);
+  return projectId ? findProject(projectId) : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
+
+export async function validateProject(project: Project, currentId?: string): Promise<string | null> {
+  if (!project.id.trim()) return 'Project id is required';
+  if (!project.name.trim()) return 'Project name is required';
+
+  // Check for duplicates
+  if (project.id !== currentId) {
+    try {
+      await readProject(project.id);
+      return `Project already exists: ${project.id}`;
+    } catch { /* good — doesn't exist */ }
+  }
+
+  const primaryRepos = project.repos.filter((r) => r.primary);
+  if (primaryRepos.length > 1) return 'Only one repo can be marked primary';
+  for (const repo of project.repos) {
+    if (!repo.path && !repo.url) return `Repo '${repo.label}' must include a path or url`;
+  }
+  return null;
+}
+
+export async function validateTaskProjectAssignment(task: Task): Promise<string | null> {
+  if (task.parentId) {
+    if (task.projectId) return 'Child tasks inherit the parent project and cannot set projectId directly';
+    const parent = await findTask(task.parentId);
+    if (!parent) return `Parent task not found: ${task.parentId}`;
+  }
+  if (task.projectId) {
+    const project = await findProject(task.projectId);
+    if (!project) return `Project not found: ${task.projectId}`;
+  }
+  return null;
+}
+
+export async function validateDependsOnIds(task: Task, dependsOnIds: string[] | undefined): Promise<string | null> {
+  const normalized = [...new Set((dependsOnIds ?? []).map((id) => id.trim()).filter(Boolean))];
+  if (normalized.includes(task.id)) return 'A task cannot depend on itself';
+
+  for (const depId of normalized) {
+    const dep = await findTask(depId);
+    if (!dep) return `Dependency task not found: ${depId}`;
+    if (dep.id === task.id) return 'A task cannot depend on itself';
+    if (dep.parentId !== task.parentId) {
+      return `Dependency #${dep.id} must share the same parent as #${task.id}`;
+    }
+  }
+
+  return validateTaskProjectConsistency(task, normalized);
+}
+
+async function validateTaskProjectConsistency(task: Task, dependsOnIds: string[]): Promise<string | null> {
+  const taskProjectId = await getTaskProjectId(task);
+  for (const depId of dependsOnIds) {
+    const dep = await findTask(depId);
+    if (!dep) continue;
+    const depProjectId = await getTaskProjectId(dep);
+    if ((taskProjectId ?? '') !== (depProjectId ?? '')) {
+      return `Dependency #${dep.id} must share the same effective project as #${task.id}`;
+    }
+  }
+  return null;
+}
+
+export async function getUnresolvedDependencies(task: Task): Promise<Task[]> {
+  const deps = await resolveTaskIds(task.dependsOnIds);
+  return deps.filter((d) => d.status !== 'done');
+}
+
+export function statusRequiresResolvedDependencies(status: Status): boolean {
+  return ['in_progress', 'review', 'testing', 'done'].includes(status);
+}
+
+// ---------------------------------------------------------------------------
+// Project input normalization (sync — no I/O)
+// ---------------------------------------------------------------------------
 
 function normalizeRepoKind(value: unknown): ProjectRepoKind {
   switch (value) {
@@ -88,255 +361,6 @@ function normalizeProjectRepo(value: unknown, fallbackLabel = 'repo'): ProjectRe
   };
 }
 
-function normalizeProject(value: unknown): Project | null {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as Record<string, unknown>;
-  const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : undefined;
-  const id = typeof raw.id === 'string' && raw.id.trim() ? slugify(raw.id) : (name ? slugify(name) : undefined);
-  if (!id || !name) return null;
-
-  const repos = Array.isArray(raw.repos)
-    ? raw.repos.map((repo, i) => normalizeProjectRepo(repo, `repo-${i + 1}`)).filter((repo): repo is ProjectRepo => repo !== null)
-    : [];
-
-  let primarySeen = false;
-  for (const repo of repos) {
-    if (repo.primary && !primarySeen) {
-      primarySeen = true;
-    } else {
-      repo.primary = false;
-    }
-  }
-
-  return {
-    id,
-    name,
-    description: typeof raw.description === 'string' ? raw.description : undefined,
-    repos,
-    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : nowIso(),
-    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : nowIso(),
-    archived: raw.archived === true ? true : undefined,
-  };
-}
-
-function normalizeTask(value: unknown): Task | null {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as Record<string, unknown>;
-  if (typeof raw.id !== 'string' || typeof raw.title !== 'string') return null;
-
-  return {
-    id: raw.id,
-    title: raw.title,
-    description: typeof raw.description === 'string' ? raw.description : undefined,
-    parentId: typeof raw.parentId === 'string' ? raw.parentId : undefined,
-    projectId: typeof raw.projectId === 'string' && raw.projectId.trim() ? slugify(raw.projectId) : undefined,
-    tags: Array.isArray(raw.tags)
-      ? [...new Set(raw.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0).map(tag => tag.trim()))]
-      : [],
-    dependsOnIds: Array.isArray(raw.dependsOnIds)
-      ? [...new Set(raw.dependsOnIds.filter((id): id is string => typeof id === 'string'))]
-      : [],
-    status: normalizeStatus(raw.status),
-    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : nowIso(),
-    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : nowIso(),
-    log: Array.isArray(raw.log) ? raw.log.map(normalizeLogEntry).filter((entry): entry is LogEntry => entry !== null) : [],
-  };
-}
-
-function migrateLegacyTasks(rawTasks: Array<Record<string, unknown>>, projects: Project[]): Task[] {
-  const takenProjectIds = new Set(projects.map(project => project.id));
-  const projectByLegacyTag = new Map(projects.map(project => [project.id, project]));
-
-  const getOrCreateProjectForTag = (tag: string): Project => {
-    const normalizedTag = slugify(tag);
-    const existing = projectByLegacyTag.get(normalizedTag);
-    if (existing) return existing;
-    const at = nowIso();
-    const project: Project = {
-      id: uniqueSlug(normalizedTag, takenProjectIds),
-      name: tag,
-      repos: [],
-      createdAt: at,
-      updatedAt: at,
-    };
-    projects.push(project);
-    projectByLegacyTag.set(normalizedTag, project);
-    projectByLegacyTag.set(project.id, project);
-    return project;
-  };
-
-  return rawTasks
-    .map(raw => {
-      const task = normalizeTask(raw);
-      if (!task) return null;
-
-      const tags = task.tags;
-
-      if (!task.projectId && !task.parentId && tags.length > 0) {
-        const primaryTag = tags[0]!;
-        const project = getOrCreateProjectForTag(primaryTag);
-        task.projectId = project.id;
-        if (tags.length > 1) {
-          task.log.push({
-            at: nowIso(),
-            author: 'system',
-            text: `Legacy tags migrated to projects. Selected project '${project.id}' from tags: ${tags.join(', ')}`,
-          });
-          task.updatedAt = nowIso();
-        }
-      }
-
-      if (task.parentId) task.projectId = undefined;
-      return task;
-    })
-    .filter((task): task is Task => task !== null);
-}
-
-function normalizeStore(value: unknown): Store {
-  if (!value || typeof value !== 'object') return { projects: [], tasks: [] };
-  const raw = value as Record<string, unknown>;
-  const projects = Array.isArray(raw.projects)
-    ? raw.projects.map(normalizeProject).filter((project): project is Project => project !== null)
-    : [];
-
-  const tasks = Array.isArray(raw.tasks)
-    ? migrateLegacyTasks(raw.tasks.filter((task): task is Record<string, unknown> => Boolean(task) && typeof task === 'object'), projects)
-    : [];
-
-  const knownProjectIds = new Set(projects.map(project => project.id));
-  for (const task of tasks) {
-    if (task.projectId && !knownProjectIds.has(task.projectId)) {
-      const placeholder: Project = {
-        id: task.projectId,
-        name: task.projectId,
-        repos: [],
-        createdAt: nowIso(),
-        updatedAt: nowIso(),
-      };
-      projects.push(placeholder);
-      knownProjectIds.add(placeholder.id);
-      task.log.push({
-        at: nowIso(),
-        author: 'system',
-        text: `Unknown project '${task.projectId}' restored as placeholder during normalization.`,
-      });
-      task.updatedAt = nowIso();
-    }
-  }
-
-  return { projects, tasks };
-}
-
-export function readStore(): Store {
-  if (!existsSync(STORE_PATH)) return { projects: [], tasks: [] };
-  try {
-    return normalizeStore(JSON.parse(readFileSync(STORE_PATH, 'utf8')));
-  } catch {
-    return { projects: [], tasks: [] };
-  }
-}
-
-export function writeStore(store: Store): void {
-  mkdirSync(dirname(STORE_PATH), { recursive: true });
-  writeFileSync(STORE_PATH, JSON.stringify(normalizeStore(store), null, 2), 'utf8');
-}
-
-export function generateId(): string {
-  return Math.random().toString(36).slice(2, 9);
-}
-
-export function findTask(store: Store, id: string): Task | undefined {
-  return store.tasks.find(t => t.id === id) ?? store.tasks.find(t => t.id.startsWith(id));
-}
-
-export function findProject(store: Store, id: string): Project | undefined {
-  const normalized = slugify(id);
-  return store.projects.find(project => project.id === normalized)
-    ?? store.projects.find(project => project.id.startsWith(normalized));
-}
-
-export function resolveTaskIds(store: Store, ids: string[] | undefined): Task[] {
-  if (!ids?.length) return [];
-  return ids.map(id => findTask(store, id)).filter((task): task is Task => task !== undefined);
-}
-
-export function getTaskProjectId(store: Store, task: Task): string | undefined {
-  if (task.projectId) return task.projectId;
-  if (!task.parentId) return undefined;
-  const parent = findTask(store, task.parentId);
-  return parent?.projectId;
-}
-
-export function getTaskProject(store: Store, task: Task): Project | undefined {
-  const projectId = getTaskProjectId(store, task);
-  return projectId ? findProject(store, projectId) : undefined;
-}
-
-export function validateProject(store: Store, project: Project, currentId?: string): string | null {
-  if (!project.id.trim()) return 'Project id is required';
-  if (!project.name.trim()) return 'Project name is required';
-  const duplicate = store.projects.find(candidate => candidate.id === project.id && candidate.id !== currentId);
-  if (duplicate) return `Project already exists: ${project.id}`;
-  const primaryRepos = project.repos.filter(repo => repo.primary);
-  if (primaryRepos.length > 1) return 'Only one repo can be marked primary';
-  for (const repo of project.repos) {
-    if (!repo.path && !repo.url) return `Repo '${repo.label}' must include a path or url`;
-  }
-  return null;
-}
-
-export function validateTaskProjectAssignment(store: Store, task: Task): string | null {
-  if (task.parentId) {
-    if (task.projectId) return 'Child tasks inherit the parent project and cannot set projectId directly';
-    const parent = findTask(store, task.parentId);
-    if (!parent) return `Parent task not found: ${task.parentId}`;
-  }
-
-  const projectId = task.projectId;
-  if (projectId && !findProject(store, projectId)) {
-    return `Project not found: ${projectId}`;
-  }
-
-  return null;
-}
-
-export function validateDependsOnIds(store: Store, task: Task, dependsOnIds: string[] | undefined): string | null {
-  const normalized = [...new Set((dependsOnIds ?? []).map(id => id.trim()).filter(Boolean))];
-  if (normalized.includes(task.id)) return 'A task cannot depend on itself';
-
-  for (const dependencyId of normalized) {
-    const dependency = findTask(store, dependencyId);
-    if (!dependency) return `Dependency task not found: ${dependencyId}`;
-    if (dependency.id === task.id) return 'A task cannot depend on itself';
-    if (dependency.parentId !== task.parentId) {
-      return `Dependency #${dependency.id} must share the same parent as #${task.id}`;
-    }
-  }
-
-  return validateTaskProjectConsistency(store, task, normalized);
-}
-
-function validateTaskProjectConsistency(store: Store, task: Task, dependsOnIds: string[]): string | null {
-  const taskProjectId = getTaskProjectId(store, task);
-  for (const dependencyId of dependsOnIds) {
-    const dependency = findTask(store, dependencyId);
-    if (!dependency) continue;
-    const dependencyProjectId = getTaskProjectId(store, dependency);
-    if ((taskProjectId ?? '') !== (dependencyProjectId ?? '')) {
-      return `Dependency #${dependency.id} must share the same effective project as #${task.id}`;
-    }
-  }
-  return null;
-}
-
-export function getUnresolvedDependencies(store: Store, task: Task): Task[] {
-  return resolveTaskIds(store, task.dependsOnIds).filter(dependency => dependency.status !== 'done');
-}
-
-export function statusRequiresResolvedDependencies(status: Status): boolean {
-  return ['in_progress', 'review', 'testing', 'done'].includes(status);
-}
-
 export function normalizeProjectInput(input: {
   id?: string;
   name?: string;
@@ -364,4 +388,132 @@ export function normalizeProjectInput(input: {
     updatedAt: nowIso(),
     archived: existing?.archived,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Task CRUD
+// ---------------------------------------------------------------------------
+
+export async function addTask(params: {
+  title: string;
+  description?: string;
+  parentId?: string;
+  projectId?: string;
+  tags?: string[];
+  dependsOnIds?: string[];
+  note?: { text: string; author: string };
+}): Promise<Task> {
+  await ensureObsidian();
+  const now = nowIso();
+  const slug = await uniqueSlugAsync(generateSlug(params.title), TASKS_PATH);
+  const task: Task = {
+    id: slug,
+    title: params.title,
+    description: params.description,
+    parentId: params.parentId,
+    projectId: params.parentId ? undefined : params.projectId,
+    tags: [...new Set(params.tags ?? [])],
+    dependsOnIds: params.dependsOnIds?.length ? [...new Set(params.dependsOnIds)] : undefined,
+    status: 'open',
+    createdAt: now,
+    updatedAt: now,
+    log: params.note ? [{ at: now, author: params.note.author, text: params.note.text }] : [],
+  };
+  await obsidianCreate(slug, TASKS_PATH, taskToMarkdown(task));
+  return task;
+}
+
+export async function updateTask(slug: string, updates: Partial<Pick<Task, 'title' | 'description' | 'parentId' | 'projectId' | 'tags' | 'dependsOnIds' | 'status'>>): Promise<Task> {
+  await ensureObsidian();
+  const task = await readTask(slug);
+
+  if (updates.title !== undefined) task.title = updates.title;
+  if (updates.description !== undefined) task.description = updates.description;
+  if (updates.parentId !== undefined) task.parentId = updates.parentId;
+  if (updates.projectId !== undefined) task.projectId = updates.projectId;
+  if (updates.tags !== undefined) task.tags = updates.tags;
+  if (updates.dependsOnIds !== undefined) task.dependsOnIds = updates.dependsOnIds;
+  if (updates.status !== undefined) task.status = updates.status;
+  task.updatedAt = nowIso();
+
+  // Full rewrite — ensures description + frontmatter stay consistent
+  await obsidianDelete(taskPath(slug));
+  await obsidianCreate(slug, TASKS_PATH, taskToMarkdown(task));
+  return task;
+}
+
+export async function updateTaskProperty(slug: string, field: string, value: string | string[] | boolean): Promise<void> {
+  await ensureObsidian();
+  const fm = fmName(field);
+  const path = taskPath(slug);
+  await obsidianPropertySet(path, fm, value, fmType(fm));
+  await obsidianPropertySet(path, 'updated', nowIso());
+}
+
+export async function appendLog(slug: string, entry: LogEntry): Promise<void> {
+  await ensureObsidian();
+  const path = taskPath(slug);
+  await obsidianAppend(path, formatLogEntry(entry) + '\n');
+  await obsidianPropertySet(path, 'updated', entry.at);
+}
+
+export async function deleteTask(slug: string): Promise<void> {
+  await ensureObsidian();
+  await obsidianDelete(taskPath(slug));
+}
+
+// ---------------------------------------------------------------------------
+// Project CRUD
+// ---------------------------------------------------------------------------
+
+export async function addProject(params: {
+  id?: string;
+  name: string;
+  description?: string;
+  repos?: Array<Partial<ProjectRepo>>;
+}): Promise<Project> {
+  await ensureObsidian();
+  const project = normalizeProjectInput(params);
+  const slug = await uniqueSlugAsync(project.id, PROJECTS_PATH);
+  project.id = slug;
+  await obsidianCreate(slug, PROJECTS_PATH, projectToMarkdown(project));
+  return project;
+}
+
+export async function updateProject(id: string, updates: Partial<Pick<Project, 'name' | 'description' | 'repos' | 'archived'>> & { nextId?: string }): Promise<Project> {
+  await ensureObsidian();
+  const existing = await readProject(id);
+  const next = normalizeProjectInput(
+    {
+      id: updates.nextId ?? existing.id,
+      name: updates.name,
+      description: updates.description,
+      repos: updates.repos,
+    },
+    existing,
+  );
+  if (updates.archived !== undefined) next.archived = updates.archived || undefined;
+
+  // Full rewrite for repos/rename
+  await obsidianDelete(projectPath(id));
+  await obsidianCreate(next.id, PROJECTS_PATH, projectToMarkdown(next));
+
+  // If ID changed, update task references
+  if (id !== next.id) {
+    const tasks = await listTasks({ project: id, all: true });
+    for (const task of tasks) {
+      await updateTaskProperty(task.id, 'projectId', next.id);
+    }
+  }
+
+  return next;
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  await ensureObsidian();
+  const tasks = await listTasks({ project: id, all: true });
+  if (tasks.length > 0) {
+    throw new Error(`Cannot delete project ${id}; tasks still reference it`);
+  }
+  await obsidianDelete(projectPath(id));
 }

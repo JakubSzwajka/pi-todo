@@ -1,21 +1,27 @@
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 import { Type } from '@sinclair/typebox';
 import {
-  readStore,
-  writeStore,
-  generateId,
-  findTask,
+  addProject,
+  addTask,
+  appendLog,
+  deleteProject,
+  deleteTask,
   findProject,
+  findTask,
+  getTaskProject,
+  getUnresolvedDependencies,
+  listProjects,
+  listTasks,
+  normalizeProjectInput,
+  statusRequiresResolvedDependencies,
+  updateProject,
+  updateTask,
+  updateTaskProperty,
   validateDependsOnIds,
   validateProject,
   validateTaskProjectAssignment,
-  getUnresolvedDependencies,
-  statusRequiresResolvedDependencies,
-  getTaskProject,
-  getTaskProjectId,
-  normalizeProjectInput,
 } from './src/store.js';
-import type { Status, Author, Task, ProjectRepo } from './src/types.js';
+import type { Author, ProjectRepo, Status, Task } from './src/types.js';
 
 const StatusEnum = () => Type.Union([
   Type.Literal('open'),
@@ -96,22 +102,22 @@ export default function (pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      const store = readStore();
       const now = () => new Date().toISOString();
 
       if (params.action === 'list') {
-        let tasks = store.tasks;
-        if (!params.all && !params.filterStatus) tasks = tasks.filter(t => t.status !== 'done' && t.status !== 'cancelled');
-        else if (params.filterStatus) tasks = tasks.filter(t => t.status === params.filterStatus);
+        let projectSlug: string | undefined;
         if (params.filterProject) {
-          const project = findProject(store, params.filterProject);
+          const project = await findProject(params.filterProject);
           if (!project) throw new Error(`Project not found: ${params.filterProject}`);
-          tasks = tasks.filter(task => getTaskProjectId(store, task) === project.id);
+          projectSlug = project.id;
         }
-        if (params.filterTag) {
-          tasks = tasks.filter(task => task.tags.includes(params.filterTag!));
-        }
-        const enriched = tasks.map(task => ({ ...task, project: getTaskProject(store, task) }));
+        const tasks = await listTasks({
+          status: params.filterStatus as Status | undefined,
+          project: projectSlug,
+          tag: params.filterTag,
+          all: params.all,
+        });
+        const enriched = await Promise.all(tasks.map(async t => ({ ...t, project: await getTaskProject(t) })));
         return {
           content: [{ type: 'text', text: enriched.length === 0 ? 'No tasks.' : JSON.stringify(enriched, null, 2) }],
           details: { tasks: enriched },
@@ -120,15 +126,16 @@ export default function (pi: ExtensionAPI) {
 
       if (params.action === 'get') {
         if (!params.id) throw new Error('id is required for get');
-        const task = findTask(store, params.id);
+        const task = await findTask(params.id);
         if (!task) throw new Error(`Task not found: ${params.id}`);
-        const children = store.tasks.filter(t => t.parentId === task.id);
-        const blockedBy = store.tasks.filter(t => (t.dependsOnIds ?? []).includes(task.id));
+        const children = await listTasks({ parent: task.id, all: true });
+        const allTasks = await listTasks({ all: true });
+        const blockedBy = allTasks.filter(t => (t.dependsOnIds ?? []).includes(task.id));
         const payload = {
           ...task,
-          project: getTaskProject(store, task),
-          subtasks: children.map(child => ({ ...child, project: getTaskProject(store, child) })),
-          blockedBy: blockedBy.map(child => ({ ...child, project: getTaskProject(store, child) })),
+          project: await getTaskProject(task),
+          subtasks: await Promise.all(children.map(async child => ({ ...child, project: await getTaskProject(child) }))),
+          blockedBy: await Promise.all(blockedBy.map(async child => ({ ...child, project: await getTaskProject(child) }))),
         };
         return {
           content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
@@ -138,70 +145,75 @@ export default function (pi: ExtensionAPI) {
 
       if (params.action === 'add') {
         if (!params.title) throw new Error('title is required for add');
-        const at = now();
-        const task: Task = {
-          id: generateId(),
+        // Build a temporary task-like object for validation
+        const tempTask: Task = {
+          id: '__pending__',
           title: params.title,
           description: params.description,
           parentId: params.parentId,
           projectId: params.parentId ? undefined : params.projectId,
-          tags: [...new Set(params.tags ?? [])],
-          dependsOnIds: [...new Set(params.dependsOnIds ?? [])],
+          tags: [...new Set<string>(params.tags ?? [])],
+          dependsOnIds: [...new Set<string>(params.dependsOnIds ?? [])],
           status: 'open',
-          createdAt: at,
-          updatedAt: at,
-          log: params.text ? [{ at, author: (params.author ?? 'lucy') as Author, text: params.text }] : [],
+          createdAt: now(),
+          updatedAt: now(),
+          log: [],
         };
-        const assignmentError = validateTaskProjectAssignment(store, task);
+        const assignmentError = await validateTaskProjectAssignment(tempTask);
         if (assignmentError) throw new Error(assignmentError);
-        const dependencyError = validateDependsOnIds(store, task, task.dependsOnIds);
+        const dependencyError = await validateDependsOnIds(tempTask, tempTask.dependsOnIds);
         if (dependencyError) throw new Error(dependencyError);
-        store.tasks.push(task);
-        writeStore(store);
+        const task = await addTask({
+          title: params.title,
+          description: params.description,
+          parentId: params.parentId,
+          projectId: params.projectId,
+          tags: params.tags,
+          dependsOnIds: params.dependsOnIds,
+          note: params.text ? { text: params.text, author: (params.author ?? 'lucy') } : undefined,
+        });
         return {
           content: [{ type: 'text', text: `Added task #${task.id}: ${task.title}` }],
-          details: { task: { ...task, project: getTaskProject(store, task) } },
+          details: { task: { ...task, project: await getTaskProject(task) } },
         };
       }
 
       if (params.action === 'status') {
         if (!params.id) throw new Error('id is required for status');
         if (!params.status) throw new Error('status is required for status action');
-        const task = findTask(store, params.id);
+        const task = await findTask(params.id);
         if (!task) throw new Error(`Task not found: ${params.id}`);
         const nextStatus = params.status as Status;
-        const unresolved = statusRequiresResolvedDependencies(nextStatus) ? getUnresolvedDependencies(store, task) : [];
+        const unresolved = statusRequiresResolvedDependencies(nextStatus) ? await getUnresolvedDependencies(task) : [];
         if (unresolved.length > 0) {
           throw new Error(`Cannot move #${task.id} to ${nextStatus}; unresolved dependencies: ${unresolved.map(t => `#${t.id}`).join(', ')}`);
         }
         const prev = task.status;
-        task.status = nextStatus;
-        task.updatedAt = now();
-        writeStore(store);
+        await updateTaskProperty(task.id, 'status', nextStatus);
+        const updated = { ...task, status: nextStatus, updatedAt: now() };
         return {
-          content: [{ type: 'text', text: `#${task.id} status: ${prev} → ${task.status}` }],
-          details: { task: { ...task, project: getTaskProject(store, task) } },
+          content: [{ type: 'text', text: `#${task.id} status: ${prev} → ${nextStatus}` }],
+          details: { task: { ...updated, project: await getTaskProject(updated) } },
         };
       }
 
       if (params.action === 'log') {
         if (!params.id) throw new Error('id is required for log');
         if (!params.text) throw new Error('text is required for log');
-        const task = findTask(store, params.id);
+        const task = await findTask(params.id);
         if (!task) throw new Error(`Task not found: ${params.id}`);
         const entry = { at: now(), author: (params.author ?? 'lucy') as Author, text: params.text };
-        task.log.push(entry);
-        task.updatedAt = entry.at;
-        writeStore(store);
+        await appendLog(task.id, entry);
+        const updated = { ...task, log: [...task.log, entry], updatedAt: entry.at };
         return {
           content: [{ type: 'text', text: `Note added to #${task.id}` }],
-          details: { task: { ...task, project: getTaskProject(store, task) } },
+          details: { task: { ...updated, project: await getTaskProject(updated) } },
         };
       }
 
       if (params.action === 'update') {
         if (!params.id) throw new Error('id is required for update');
-        const task = findTask(store, params.id);
+        const task = await findTask(params.id);
         if (!task) throw new Error(`Task not found: ${params.id}`);
         const nextTask: Task = {
           ...task,
@@ -212,48 +224,48 @@ export default function (pi: ExtensionAPI) {
           tags: params.tags ?? task.tags,
           dependsOnIds: params.dependsOnIds ?? task.dependsOnIds ?? [],
         };
-        const assignmentError = validateTaskProjectAssignment(store, nextTask);
+        const assignmentError = await validateTaskProjectAssignment(nextTask);
         if (assignmentError) throw new Error(assignmentError);
-        const dependencyError = validateDependsOnIds(store, nextTask, nextTask.dependsOnIds);
+        const dependencyError = await validateDependsOnIds(nextTask, nextTask.dependsOnIds);
         if (dependencyError) throw new Error(dependencyError);
-        task.title = nextTask.title;
-        task.description = nextTask.description;
-        task.parentId = nextTask.parentId;
-        task.projectId = nextTask.projectId;
-        task.tags = nextTask.tags;
-        task.dependsOnIds = nextTask.dependsOnIds;
-        task.updatedAt = now();
-        writeStore(store);
+        const updated = await updateTask(task.id, {
+          title: params.title,
+          description: params.description,
+          parentId: params.parentId,
+          projectId: nextTask.projectId,
+          tags: params.tags,
+          dependsOnIds: params.dependsOnIds,
+        });
         return {
-          content: [{ type: 'text', text: `Updated #${task.id}` }],
-          details: { task: { ...task, project: getTaskProject(store, task) } },
+          content: [{ type: 'text', text: `Updated #${updated.id}` }],
+          details: { task: { ...updated, project: await getTaskProject(updated) } },
         };
       }
 
       if (params.action === 'delete') {
         if (!params.id) throw new Error('id is required for delete');
-        const idx = store.tasks.findIndex(t => t.id === params.id || t.id.startsWith(params.id!));
-        if (idx === -1) throw new Error(`Task not found: ${params.id}`);
-        const [removed] = store.tasks.splice(idx, 1);
-        writeStore(store);
+        const task = await findTask(params.id);
+        if (!task) throw new Error(`Task not found: ${params.id}`);
+        await deleteTask(task.id);
         return {
-          content: [{ type: 'text', text: `Deleted #${removed.id}: ${removed.title}` }],
-          details: { task: removed },
+          content: [{ type: 'text', text: `Deleted #${task.id}: ${task.title}` }],
+          details: { task },
         };
       }
 
       if (params.action === 'project_list') {
+        const projects = await listProjects();
         return {
-          content: [{ type: 'text', text: store.projects.length === 0 ? 'No projects.' : JSON.stringify(store.projects, null, 2) }],
-          details: { projects: store.projects },
+          content: [{ type: 'text', text: projects.length === 0 ? 'No projects.' : JSON.stringify(projects, null, 2) }],
+          details: { projects },
         };
       }
 
       if (params.action === 'project_get') {
         if (!params.projectId) throw new Error('projectId is required for project_get');
-        const project = findProject(store, params.projectId);
+        const project = await findProject(params.projectId);
         if (!project) throw new Error(`Project not found: ${params.projectId}`);
-        const tasks = store.tasks.filter(task => getTaskProjectId(store, task) === project.id);
+        const tasks = await listTasks({ project: project.id, all: true });
         return {
           content: [{ type: 'text', text: JSON.stringify({ ...project, tasks }, null, 2) }],
           details: { project, tasks },
@@ -262,17 +274,22 @@ export default function (pi: ExtensionAPI) {
 
       if (params.action === 'project_add') {
         if (!params.name) throw new Error('name is required for project_add');
-        const project = normalizeProjectInput({
+        const candidate = normalizeProjectInput({
+          id: params.projectId,
+          name: params.name,
+          description: params.description,
+          repos: params.repos as ProjectRepo[] | undefined,
+        });
+        candidate.archived = params.archived ? true : undefined;
+        const error = await validateProject(candidate);
+        if (error) throw new Error(error);
+        const project = await addProject({
           id: params.projectId,
           name: params.name,
           description: params.description,
           repos: params.repos as ProjectRepo[] | undefined,
         });
         project.archived = params.archived ? true : undefined;
-        const error = validateProject(store, project);
-        if (error) throw new Error(error);
-        store.projects.push(project);
-        writeStore(store);
         return {
           content: [{ type: 'text', text: `Added project ${project.name} (${project.id})` }],
           details: { project },
@@ -281,44 +298,35 @@ export default function (pi: ExtensionAPI) {
 
       if (params.action === 'project_update') {
         if (!params.projectId) throw new Error('projectId is required for project_update');
-        const existing = findProject(store, params.projectId);
+        const existing = await findProject(params.projectId);
         if (!existing) throw new Error(`Project not found: ${params.projectId}`);
-        const project = normalizeProjectInput({
+        const candidate = normalizeProjectInput({
           id: params.id ?? existing.id,
           name: params.name,
           description: params.description,
           repos: params.repos as ProjectRepo[] | undefined,
         }, existing);
-        project.archived = params.archived === undefined ? existing.archived : (params.archived ? true : undefined);
-        const error = validateProject(store, project, existing.id);
+        candidate.archived = params.archived === undefined ? existing.archived : (params.archived ? true : undefined);
+        const error = await validateProject(candidate, existing.id);
         if (error) throw new Error(error);
-        const previousId = existing.id;
-        existing.id = project.id;
-        existing.name = project.name;
-        existing.description = project.description;
-        existing.repos = project.repos;
-        existing.archived = project.archived;
-        existing.updatedAt = now();
-        if (previousId !== existing.id) {
-          for (const task of store.tasks) {
-            if (task.projectId === previousId) task.projectId = existing.id;
-          }
-        }
-        writeStore(store);
+        const updated = await updateProject(existing.id, {
+          nextId: params.id,
+          name: params.name,
+          description: params.description,
+          repos: params.repos as ProjectRepo[] | undefined,
+          archived: params.archived,
+        });
         return {
-          content: [{ type: 'text', text: `Updated project ${existing.name} (${existing.id})` }],
-          details: { project: existing },
+          content: [{ type: 'text', text: `Updated project ${updated.name} (${updated.id})` }],
+          details: { project: updated },
         };
       }
 
       if (params.action === 'project_delete') {
         if (!params.projectId) throw new Error('projectId is required for project_delete');
-        const project = findProject(store, params.projectId);
+        const project = await findProject(params.projectId);
         if (!project) throw new Error(`Project not found: ${params.projectId}`);
-        const inUse = store.tasks.some(task => getTaskProjectId(store, task) === project.id);
-        if (inUse) throw new Error(`Cannot delete project ${project.id}; tasks still reference it`);
-        store.projects = store.projects.filter(candidate => candidate.id !== project.id);
-        writeStore(store);
+        await deleteProject(project.id);
         return {
           content: [{ type: 'text', text: `Deleted project ${project.id}` }],
           details: { project },
