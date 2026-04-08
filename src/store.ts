@@ -110,6 +110,7 @@ export async function listTasks(filters?: TaskFilters): Promise<Task[]> {
     }),
   );
 
+  // First pass: apply all filters
   const matching = entries.filter(({ props }) => {
     const status = props.status as string | undefined;
     if (!filters?.all && !filters?.status) {
@@ -130,6 +131,24 @@ export async function listTasks(filters?: TaskFilters): Promise<Task[]> {
     }
     return true;
   });
+
+  // Second pass: include subtasks whose parent matched (project inheritance)
+  if (filters?.project) {
+    const matchedSlugs = new Set(matching.map(({ slug }) => slug));
+    for (const entry of entries) {
+      if (matchedSlugs.has(entry.slug)) continue;
+      const parent = entry.props.parent as string | undefined;
+      if (parent && matchedSlugs.has(parent)) {
+        const status = entry.props.status as string | undefined;
+        if (!filters.all && !filters.status) {
+          if (status === 'done' || status === 'cancelled') continue;
+        }
+        if (filters.status && status !== filters.status) continue;
+        matching.push(entry);
+        matchedSlugs.add(entry.slug);
+      }
+    }
+  }
 
   return Promise.all(
     matching.map(async ({ slug, path: p }) => {
