@@ -7,5 +7,5 @@
     "skipLibCheck": true,
     "outDir": "dist"
   },
-  "include": ["src/**/*", "extension/**/*", "scripts/**/*", "tests/**/*"]
+  "include": ["src/**/*"]
 }

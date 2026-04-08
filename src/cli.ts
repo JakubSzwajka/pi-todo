@@ -13,7 +13,6 @@ import {
   cmdStatus,
   cmdUpdate,
 } from './commands.js';
-import type { ProjectRepo } from './types.js';
 
 function parseArgs(argv: string[]) {
   const pos: string[] = [];
@@ -40,53 +39,28 @@ function parseCsv(raw: string): string[] {
   return raw.split(',').map(t => t.trim()).filter(Boolean);
 }
 
-function parseRepos(raw: string | undefined): ProjectRepo[] | undefined {
-  if (!raw) return undefined;
-  return raw
-    .split(',')
-    .map(chunk => chunk.trim())
-    .filter(Boolean)
-    .map((entry, index) => {
-      const [kindRaw, labelRaw, targetRaw, primaryRaw] = entry.split('|').map(part => part.trim());
-      const kind = (kindRaw || 'git') as ProjectRepo['kind'];
-      const label = labelRaw || `repo-${index + 1}`;
-      const target = targetRaw || '';
-      return {
-        id: `${label}-${index + 1}`,
-        kind,
-        label,
-        path: kind === 'local' ? target : undefined,
-        url: kind === 'local' ? undefined : target,
-        primary: primaryRaw === 'primary',
-      };
-    });
-}
-
 const HELP = `
 Usage: todo <command> [options]
 
 Task commands:
-  add <title> [--description <text>] [--project <project-id>] [--tags <tag1,tag2>]
-              [--parent <id>] [--depends-on <id1,id2>] [--note <text>]
-  list [--status <status>] [--project <project-id>] [--tag <tag>] [--all]
+  add <title> [--description <text>] [--project <id>] [--parent <id>] [--tags <a,b>] [--note <text>]
+  list [--status <status>] [--project <id>] [--tag <tag>] [--all] [--tree]
   show <id>
   status <id> <status>
-  update <id> [--title <text>] [--description <text>]
-              [--project <project-id>] [--tags <tag1,tag2>] [--parent <id>] [--depends-on <id1,id2>]
+  update <id> [--title <text>] [--description <text>] [--project <id>] [--parent <id>] [--tags <a,b>]
   log <id> <note text>
   delete <id>
 
 Project commands:
   project list
-  project add <name> [--id <project-id>] [--description <text>] [--repos <kind|label|target|primary,...>]
+  project add <name> [--id <id>] [--description <text>]
   project show <id>
-  project update <id> [--name <text>] [--next-id <project-id>] [--description <text>] [--repos <...>]
+  project update <id> [--name <text>] [--description <text>]
   project delete <id>
 
-Repo encoding examples:
-  --repos "local|workspace|/Users/kuba/DEV/priv/pi-todo|primary,github|origin|https://github.com/acme/pi-todo"
+Statuses: open | in_progress | done | cancelled
 
-Statuses: open | in_progress | review | testing | waiting | done | cancelled
+Description and notes can contain [[wiki-links]] to knowledge base pages.
 `;
 
 async function main() {
@@ -106,7 +80,6 @@ async function main() {
           id: flags['id'] as string | undefined,
           name,
           description: flags['description'] as string | undefined,
-          repos: parseRepos(flags['repos'] as string | undefined),
         });
         break;
       }
@@ -119,9 +92,7 @@ async function main() {
         if (!projectRest[0]) { console.error('Usage: todo project update <id> [options]'); process.exit(1); }
         await cmdProjectUpdate(projectRest[0], {
           name: flags['name'] as string | undefined,
-          nextId: flags['next-id'] as string | undefined,
           description: flags['description'] as string | undefined,
-          repos: parseRepos(flags['repos'] as string | undefined),
         });
         break;
       }
@@ -145,7 +116,6 @@ async function main() {
         description: flags['description'] as string | undefined,
         note: flags['note'] as string | undefined,
         parentId: flags['parent'] as string | undefined,
-        dependsOnIds: flags['depends-on'] ? parseCsv(flags['depends-on'] as string) : undefined,
         projectId: flags['project'] as string | undefined,
         tags: flags['tags'] ? parseCsv(flags['tags'] as string) : undefined,
       });
@@ -157,6 +127,7 @@ async function main() {
         projectId: flags['project'] as string | undefined,
         tag: flags['tag'] as string | undefined,
         all: flags['all'] === true,
+        tree: flags['tree'] === true,
       });
       break;
     }
@@ -176,7 +147,6 @@ async function main() {
         title: flags['title'] as string | undefined,
         description: flags['description'] as string | undefined,
         parentId: flags['parent'] as string | undefined,
-        dependsOnIds: flags['depends-on'] ? parseCsv(flags['depends-on'] as string) : undefined,
         projectId: flags['project'] as string | undefined,
         tags: flags['tags'] ? parseCsv(flags['tags'] as string) : undefined,
       });
